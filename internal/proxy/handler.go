@@ -150,8 +150,9 @@ func (h *Handler) match(path string) *route {
 
 // state travels in the request context to the ReverseProxy callbacks.
 type state struct {
-	p             *capture.Pending
-	upstreamError bool
+	p              *capture.Pending
+	upstreamError  bool
+	upstreamStatus int
 }
 
 type stateKey struct{}
@@ -195,7 +196,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// panic goes on to the server, which closes the connection.
 	defer func() {
 		rec := recover()
-		h.finish(r, p, cw, body, pre, st.upstreamError || rec != nil)
+		h.finish(r, p, cw, body, pre, st, rec != nil)
 		if rec != nil {
 			panic(rec)
 		}
@@ -268,9 +269,16 @@ func (h *Handler) prepareRequest(r *http.Request, p *capture.Pending, rc config.
 }
 
 // finish completes the measurements and hands the response side to stage 2.
-func (h *Handler) finish(r *http.Request, p *capture.Pending, cw *countingWriter, body *countingBody, pre preRead, upstreamError bool) {
+func (h *Handler) finish(r *http.Request, p *capture.Pending, cw *countingWriter, body *countingBody, pre preRead, st *state, aborted bool) {
 	p.End = time.Now()
 	p.Status = cw.status
+	upgraded := cw.status == 0 && st.upstreamStatus == http.StatusSwitchingProtocols
+	if upgraded {
+		// ReverseProxy writes the 101 on the hijacked connection, bypassing
+		// the writer; the tunnel that follows is not measured.
+		p.Status = http.StatusSwitchingProtocols
+	}
+	upstreamError := st.upstreamError || aborted
 	if body != nil {
 		body.finish(false)
 		p.ReqBytes = body.n.Load() - pre.added
@@ -282,6 +290,8 @@ func (h *Handler) finish(r *http.Request, p *capture.Pending, cw *countingWriter
 		}
 	}
 	switch {
+	case upgraded && !upstreamError:
+		p.Outcome = capture.OutcomeOK // the tunnel ending closes the request context
 	case r.Context().Err() != nil:
 		p.Outcome = capture.OutcomeClientCancelled
 	case upstreamError:
@@ -297,6 +307,7 @@ func (h *Handler) finish(r *http.Request, p *capture.Pending, cw *countingWriter
 func onHeaders(res *http.Response) error {
 	if st := stateOf(res.Request.Context()); st != nil {
 		st.p.Headers = time.Now()
+		st.upstreamStatus = res.StatusCode
 	}
 	return nil
 }

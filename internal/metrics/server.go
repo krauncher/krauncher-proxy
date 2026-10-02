@@ -13,6 +13,7 @@ import (
 	"net/http/pprof"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -21,11 +22,14 @@ import (
 )
 
 // Server is the metrics listener: /metrics, /healthz, /readyz and, when
-// enabled, /debug/pprof. It never shares the proxy listener.
+// enabled, /debug/pprof. It never shares the proxy listener. The bearer token
+// protects /metrics and pprof; health endpoints stay open for probes and
+// reveal nothing but the state.
 type Server struct {
-	srv *http.Server
-	ln  net.Listener
-	tls bool
+	srv      *http.Server
+	ln       net.Listener
+	tls      bool
+	draining atomic.Bool
 }
 
 // NewServer prepares the listener; Serve starts it.
@@ -43,21 +47,29 @@ func NewServer(c config.Metrics, m *Metrics) (*Server, error) {
 		sum := sha256.Sum256([]byte(t))
 		token = sum[:]
 	}
+	s := &Server{}
+	protect := func(h http.Handler) http.Handler {
+		if token == nil {
+			return h
+		}
+		return bearer(token, h)
+	}
 	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.HandlerFor(m.Registry(), promhttp.HandlerOpts{}))
-	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok\n")) })
-	mux.Handle("/healthz", ok)
-	mux.Handle("/readyz", ok)
+	mux.Handle("/metrics", protect(promhttp.HandlerFor(m.Registry(), promhttp.HandlerOpts{})))
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok\n")) })
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if s.draining.Load() {
+			http.Error(w, "shutting down", http.StatusServiceUnavailable)
+			return
+		}
+		w.Write([]byte("ok\n"))
+	})
 	if c.Pprof {
-		mux.HandleFunc("/debug/pprof/", pprof.Index)
-		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		mux.Handle("/debug/pprof/", protect(http.HandlerFunc(pprof.Index)))
+		mux.Handle("/debug/pprof/profile", protect(http.HandlerFunc(pprof.Profile)))
+		mux.Handle("/debug/pprof/trace", protect(http.HandlerFunc(pprof.Trace)))
 	}
-	var h http.Handler = mux
-	if token != nil {
-		h = bearer(token, mux)
-	}
-	s := &Server{srv: &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}}
+	s.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	if c.TLS.Enabled() {
 		cfg := &tls.Config{MinVersion: tls.VersionTLS12}
 		cert, err := tls.LoadX509KeyPair(c.TLS.CertFile, c.TLS.KeyFile)
@@ -98,6 +110,10 @@ func (s *Server) Serve() error {
 	}
 	return err
 }
+
+// Drain makes /readyz answer 503, so load balancers stop sending traffic
+// while the proxy finishes in-flight requests.
+func (s *Server) Drain() { s.draining.Store(true) }
 
 // Close stops the listener immediately; scrapes are short.
 func (s *Server) Close() error { return s.srv.Close() }

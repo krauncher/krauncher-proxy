@@ -57,7 +57,11 @@ func TestHeaderAuth(t *testing.T) {
 }
 
 func TestTokensFileErrors(t *testing.T) {
-	for _, content := range []string{"", "noseparator\n", "a:nothex\n", "a:abcd\n", ":" + HashToken("x") + "\n"} {
+	h1, h2 := HashToken("x"), HashToken("y")
+	for _, content := range []string{"", "noseparator\n", "a:nothex\n", "a:abcd\n", ":" + h1 + "\n",
+		"a:" + h1 + "\na:" + h2 + "\n", // repeated name
+		"a:" + h1 + "\nb:" + h1 + "\n", // repeated token
+	} {
 		if _, err := LoadTokens(tokensFile(t, content)); err == nil {
 			t.Errorf("%q accepted", content)
 		}

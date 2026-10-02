@@ -20,6 +20,7 @@ const ns = "llm_shape"
 // Metrics turns records into Prometheus series.
 type Metrics struct {
 	reg         *prometheus.Registry
+	names       map[string]bool // registered llm_shape_* names
 	models      *labelSet
 	clients     *labelSet
 	clientLabel bool
@@ -70,6 +71,7 @@ func (s *labelSet) value(v string) string {
 func New(c config.Metrics, clients []string) *Metrics {
 	m := &Metrics{
 		reg:         prometheus.NewRegistry(),
+		names:       map[string]bool{},
 		models:      newLabelSet(c.Models, c.MaxModels),
 		clients:     newLabelSet(clients, 0),
 		clientLabel: c.ClientLabel,
@@ -86,11 +88,15 @@ func New(c config.Metrics, clients []string) *Metrics {
 		cellLabels = append(cellLabels, "client")
 	}
 	counter := func(name, help string, labels []string) *prometheus.CounterVec {
+		m.names[ns+"_"+name] = true
 		v := prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: ns, Name: name, Help: help}, labels)
 		m.reg.MustRegister(v)
 		return v
 	}
 	hist := func(name, help string, buckets []float64, labels []string) *prometheus.HistogramVec {
+		for _, suffix := range []string{"", "_bucket", "_count", "_sum"} {
+			m.names[ns+"_"+name+suffix] = true
+		}
 		o := prometheus.HistogramOpts{Namespace: ns, Name: name, Help: help, Buckets: buckets}
 		if c.NativeHistograms {
 			o.NativeHistogramBucketFactor = 1.1
@@ -120,11 +126,16 @@ func New(c config.Metrics, clients []string) *Metrics {
 	return m
 }
 
+// Names returns every llm_shape_* series name that can appear, including
+// histogram _bucket, _count and _sum, whether or not it has been observed.
+func (m *Metrics) Names() map[string]bool { return m.names }
+
 // Registry returns the registry to serve.
 func (m *Metrics) Registry() *prometheus.Registry { return m.reg }
 
 // Func registers a metric whose value is read on scrape (self metrics).
 func (m *Metrics) Func(name, help string, counter bool, constLabels prometheus.Labels, fn func() float64) {
+	m.names[ns+"_"+name] = true
 	opts := prometheus.Opts{Namespace: ns, Name: name, Help: help, ConstLabels: constLabels}
 	if counter {
 		m.reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts(opts), fn))

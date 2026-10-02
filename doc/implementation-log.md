@@ -325,3 +325,24 @@ No behaviour change beyond item 10; all tests unchanged and passing.
   `dashboards/gen/shape_overview.py`.
 - Not yet verified: the compose stack has not been run (needs the base images
   pulled), so dashboard queries are untested against a live Prometheus.
+
+### 2026-10-02 — M3 test coverage review
+
+- Fixed (design): the metrics bearer token also guarded `/healthz` and
+  `/readyz`, which would fail Kubernetes probes; it now guards `/metrics` and
+  pprof only. `/readyz` answered "ok" unconditionally; it now answers 503 once
+  shutdown starts.
+- Fixed: upgraded connections were recorded with status 0 (ReverseProxy writes
+  the 101 on the hijacked connection, bypassing the writer). Now status 101,
+  outcome ok, latency = tunnel lifetime; documented in `protocols.md`.
+- Fixed: repeated names or tokens in the tokens file are refused (they made
+  clients indistinguishable).
+- Added: dashboard ↔ code test (every `llm_shape_*` name in a panel query must
+  be exported; 20 names checked); self metrics checked against induced
+  conditions (drops, queue length, unrouted, auth failures, stage-2 panic,
+  sink write errors, worker busy time); metrics listener TLS and client
+  certificates; pprof behind the token; client name sanitization through mTLS
+  end to end; upgrade record.
+- `testpki`: throwaway CA and certificates shared by tests.
+- Not covered by tests: PromQL syntax of the dashboard (needs a live
+  Prometheus: the compose run), `native_histograms`.

@@ -14,6 +14,7 @@ import (
 
 	"github.com/krauncher/krauncher-proxy/internal/config"
 	"github.com/krauncher/krauncher-proxy/internal/shape"
+	"github.com/krauncher/krauncher-proxy/internal/testpki"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -98,12 +99,8 @@ func TestClientLabelAndEmbeddings(t *testing.T) {
 	}
 }
 
-func TestServerBearerAndHealth(t *testing.T) {
-	dir := t.TempDir()
-	tok := filepath.Join(dir, "token")
-	os.WriteFile(tok, []byte("scrape-secret\n"), 0o600)
-	c := config.Default().Metrics
-	c.Listen, c.BearerTokenFile = "127.0.0.1:0", tok
+func startServer(t *testing.T, c config.Metrics) *Server {
+	t.Helper()
 	m := New(c, nil)
 	m.Func("test_gauge", "test", false, nil, func() float64 { return 7 })
 	s, err := NewServer(c, m)
@@ -111,31 +108,88 @@ func TestServerBearerAndHealth(t *testing.T) {
 		t.Fatal(err)
 	}
 	go s.Serve()
-	defer s.Close()
-	get := func(path, auth string) (int, string) {
-		req, _ := http.NewRequest(http.MethodGet, "http://"+s.Addr()+path, nil)
-		if auth != "" {
-			req.Header.Set("Authorization", auth)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		b, _ := io.ReadAll(resp.Body)
-		return resp.StatusCode, string(b)
+	t.Cleanup(func() { s.Close() })
+	return s
+}
+
+func fetch(t *testing.T, c *http.Client, url, auth string) (int, string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	if auth != "" {
+		req.Header.Set("Authorization", auth)
 	}
-	if code, _ := get("/metrics", ""); code != 401 {
+	resp, err := c.Do(req)
+	if err != nil {
+		return 0, err.Error()
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
+func TestServerBearerHealthAndDrain(t *testing.T) {
+	tok := filepath.Join(t.TempDir(), "token")
+	os.WriteFile(tok, []byte("scrape-secret\n"), 0o600)
+	c := config.Default().Metrics
+	c.Listen, c.BearerTokenFile, c.Pprof = "127.0.0.1:0", tok, true
+	s := startServer(t, c)
+	base, hc := "http://"+s.Addr(), http.DefaultClient
+
+	if code, _ := fetch(t, hc, base+"/metrics", ""); code != 401 {
 		t.Errorf("no token: %d", code)
 	}
-	if code, _ := get("/metrics", "Bearer wrong"); code != 401 {
+	if code, _ := fetch(t, hc, base+"/metrics", "Bearer wrong"); code != 401 {
 		t.Errorf("wrong token: %d", code)
 	}
-	code, body := get("/metrics", "Bearer scrape-secret")
+	code, body := fetch(t, hc, base+"/metrics", "Bearer scrape-secret")
 	if code != 200 || !strings.Contains(body, "llm_shape_test_gauge 7") || !strings.Contains(body, "go_goroutines") {
 		t.Errorf("metrics: %d", code)
 	}
-	if code, _ := get("/debug/pprof/", "Bearer scrape-secret"); code != 404 {
+	if code, _ := fetch(t, hc, base+"/debug/pprof/", ""); code != 401 {
+		t.Errorf("pprof without token: %d", code)
+	}
+	if code, _ := fetch(t, hc, base+"/debug/pprof/", "Bearer scrape-secret"); code != 200 {
+		t.Errorf("pprof with token: %d", code)
+	}
+	// Probes work without the token.
+	for _, p := range []string{"/healthz", "/readyz"} {
+		if code, _ := fetch(t, hc, base+p, ""); code != 200 {
+			t.Errorf("%s: %d", p, code)
+		}
+	}
+	s.Drain()
+	if code, _ := fetch(t, hc, base+"/readyz", ""); code != 503 {
+		t.Errorf("readyz while draining: %d", code)
+	}
+	if code, _ := fetch(t, hc, base+"/healthz", ""); code != 200 {
+		t.Errorf("healthz while draining: %d", code)
+	}
+}
+
+func TestServerPprofOffByDefault(t *testing.T) {
+	c := config.Default().Metrics
+	c.Listen = "127.0.0.1:0"
+	s := startServer(t, c)
+	if code, _ := fetch(t, http.DefaultClient, "http://"+s.Addr()+"/debug/pprof/", ""); code != 404 {
 		t.Errorf("pprof served while disabled: %d", code)
+	}
+}
+
+func TestServerTLSAndClientCertificates(t *testing.T) {
+	pki := testpki.New(t)
+	cert, key, _ := pki.Issue(t, "metrics", true)
+	_, _, scraper := pki.Issue(t, "prometheus", false)
+	c := config.Default().Metrics
+	c.Listen, c.TLS = "127.0.0.1:0", config.TLS{CertFile: cert, KeyFile: key, ClientCAFile: pki.CAFile}
+	s := startServer(t, c)
+	url := "https://" + s.Addr() + "/metrics"
+	if code, body := fetch(t, pki.Client(scraper), url, ""); code != 200 || !strings.Contains(body, "llm_shape_test_gauge") {
+		t.Errorf("scrape with a client certificate: %d", code)
+	}
+	if code, _ := fetch(t, pki.Client(), url, ""); code != 0 {
+		t.Errorf("scrape without a client certificate got %d", code)
+	}
+	if code, _ := fetch(t, http.DefaultClient, "http://"+s.Addr()+"/metrics", ""); code == 200 {
+		t.Error("plain HTTP served metrics on a TLS listener")
 	}
 }

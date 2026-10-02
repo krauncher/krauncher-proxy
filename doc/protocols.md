@@ -226,5 +226,6 @@ timeline point, and `chunks`. `endpoint: other`.
   (br, zstd) are recorded with `parse_error: unsupported_encoding` until a need
   is shown.
   Streaming responses from LLM APIs are normally uncompressed.
-- WebSocket and other upgrades: passed through as a tunnel, recorded as
-  `generic` with timings only.
+- WebSocket and other upgrades: passed through as a tunnel. The record has
+  status 101 and outcome `ok`; `latency_ms` is the tunnel lifetime; bytes
+  exchanged through the tunnel are not measured.

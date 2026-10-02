@@ -3,15 +3,7 @@
 package main
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"io"
-	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -23,69 +15,8 @@ import (
 
 	"github.com/krauncher/krauncher-proxy/internal/auth"
 	"github.com/krauncher/krauncher-proxy/internal/config"
+	"github.com/krauncher/krauncher-proxy/internal/testpki"
 )
-
-// testPKI is a CA with helpers to issue server and client certificates.
-type testPKI struct {
-	dir    string
-	ca     *x509.Certificate
-	caKey  *ecdsa.PrivateKey
-	caFile string
-	pool   *x509.CertPool
-}
-
-func newPKI(t *testing.T) *testPKI {
-	t.Helper()
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test CA"},
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
-		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
-	}
-	der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	ca, _ := x509.ParseCertificate(der)
-	p := &testPKI{dir: t.TempDir(), ca: ca, caKey: key, pool: x509.NewCertPool()}
-	p.pool.AddCert(ca)
-	p.caFile = p.write("ca.pem", "CERTIFICATE", der)
-	return p
-}
-
-func (p *testPKI) write(name, typ string, der []byte) string {
-	path := filepath.Join(p.dir, name)
-	os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: typ, Bytes: der}), 0o600)
-	return path
-}
-
-// issue returns a certificate and key signed by the CA, as files and as a
-// tls.Certificate.
-func (p *testPKI) issue(t *testing.T, name string, server bool) (certFile, keyFile string, c tls.Certificate) {
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: name},
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature,
-	}
-	if server {
-		tmpl.ExtKeyUsage, tmpl.IPAddresses = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, []net.IP{net.ParseIP("127.0.0.1")}
-	} else {
-		tmpl.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, p.ca, &key.PublicKey, p.caKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	kder, _ := x509.MarshalECPrivateKey(key)
-	certFile, keyFile = p.write(name+".pem", "CERTIFICATE", der), p.write(name+".key", "EC PRIVATE KEY", kder)
-	c, err = tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return certFile, keyFile, c
-}
-
-func (p *testPKI) client(certs ...tls.Certificate) *http.Client {
-	return &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: p.pool, Certificates: certs}}}
-}
 
 func waitListening(t *testing.T, addr string) {
 	for range 100 {
@@ -119,9 +50,9 @@ func TestServeTLSWithHeaderAuthAndMetrics(t *testing.T) {
 		io.WriteString(w, "ok")
 	}))
 	defer up.Close()
-	pki := newPKI(t)
-	certFile, keyFile, _ := pki.issue(t, "proxy", true)
-	tokens := filepath.Join(pki.dir, "tokens")
+	pki := testpki.New(t)
+	certFile, keyFile, _ := pki.Issue(t, "proxy", true)
+	tokens := filepath.Join(pki.Dir, "tokens")
 	os.WriteFile(tokens, []byte("app-a:"+auth.HashToken("token-a")+"\n"), 0o600)
 
 	cfg := serveConfig(t, up.URL, time.Second)
@@ -134,7 +65,7 @@ func TestServeTLSWithHeaderAuthAndMetrics(t *testing.T) {
 	}
 	cancel, done := startServe(t, cfg)
 	defer func() { cancel(); <-done }()
-	c := pki.client()
+	c := pki.Client()
 	url := "https://" + cfg.Listen.Addr + "/v1/models"
 
 	if code, _, err := get(c, url, nil); err != nil || code != 401 {
@@ -190,13 +121,13 @@ func TestServeTLSWithHeaderAuthAndMetrics(t *testing.T) {
 func TestServeMTLS(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))
 	defer up.Close()
-	pki := newPKI(t)
-	certFile, keyFile, _ := pki.issue(t, "proxy", true)
-	_, _, allowed := pki.issue(t, "svc-a", false)
-	_, _, other := pki.issue(t, "svc-b", false)
+	pki := testpki.New(t)
+	certFile, keyFile, _ := pki.Issue(t, "proxy", true)
+	_, _, allowed := pki.Issue(t, "svc-a", false)
+	_, _, other := pki.Issue(t, "svc-b", false)
 
 	cfg := serveConfig(t, up.URL, time.Second)
-	cfg.Listen.TLS = config.TLS{CertFile: certFile, KeyFile: keyFile, ClientCAFile: pki.caFile}
+	cfg.Listen.TLS = config.TLS{CertFile: certFile, KeyFile: keyFile, ClientCAFile: pki.CAFile}
 	cfg.ClientAuth = config.ClientAuth{Mode: config.AuthMTLS, MTLS: config.MTLS{NameFrom: "cn", AllowedNames: []string{"svc-a"}}}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
@@ -205,13 +136,37 @@ func TestServeMTLS(t *testing.T) {
 	defer func() { cancel(); <-done }()
 	url := "https://" + cfg.Listen.Addr + "/x"
 
-	if code, _, err := get(pki.client(allowed), url, nil); err != nil || code != 200 {
+	if code, _, err := get(pki.Client(allowed), url, nil); err != nil || code != 200 {
 		t.Errorf("allowed certificate: %d %v", code, err)
 	}
-	if code, _, err := get(pki.client(other), url, nil); err != nil || code != 401 {
+	if code, _, err := get(pki.Client(other), url, nil); err != nil || code != 401 {
 		t.Errorf("certificate outside the allowlist: %d %v", code, err)
 	}
-	if _, _, err := get(pki.client(), url, nil); err == nil {
+	if _, _, err := get(pki.Client(), url, nil); err == nil {
 		t.Error("connection without a client certificate accepted")
+	}
+}
+
+// A certificate name that breaks the export rules reaches the record as
+// "invalid", never as written.
+func TestServeMTLSClientNameSanitized(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))
+	defer up.Close()
+	pki := testpki.New(t)
+	certFile, keyFile, _ := pki.Issue(t, "proxy", true)
+	_, _, odd := pki.Issue(t, "name with spaces; DROP", false)
+
+	cfg := serveConfig(t, up.URL, time.Second)
+	cfg.Listen.TLS = config.TLS{CertFile: certFile, KeyFile: keyFile, ClientCAFile: pki.CAFile}
+	cfg.ClientAuth = config.ClientAuth{Mode: config.AuthMTLS, MTLS: config.MTLS{NameFrom: "cn"}} // any CA-signed name
+	cancel, done := startServe(t, cfg)
+	if code, _, err := get(pki.Client(odd), "https://"+cfg.Listen.Addr+"/x", nil); err != nil || code != 200 {
+		t.Fatalf("request: %d %v", code, err)
+	}
+	cancel()
+	<-done
+	lines := jsonlLines(t, cfg)
+	if len(lines) != 1 || !strings.Contains(lines[0], `"client":"invalid"`) || strings.Contains(lines[0], "DROP") {
+		t.Fatalf("records %v", lines)
 	}
 }

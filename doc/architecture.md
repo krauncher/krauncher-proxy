@@ -135,8 +135,11 @@ client ◄── │            (in-flight ++)   (bounded)     (pooled, HTTP/1.1
   rotated files. Flushes on interval and on shutdown.
 - **Metrics endpoint**: a separate listener (`metrics.listen`, default
   `127.0.0.1:9090`) serving `/metrics`, `/healthz`, `/readyz`. Never on the
-  proxy listener, so an application cannot collide with it. Optional TLS and
-  bearer token (`configuration.md`).
+  proxy listener, so an application cannot collide with it. Optional TLS,
+  client certificates and bearer token (`configuration.md`). The token guards
+  `/metrics` and pprof only; the health endpoints stay open for probes.
+  `/readyz` answers 503 from the start of shutdown, so load balancers stop
+  sending traffic while in-flight requests finish.
 
 ### Prefix repetition estimator (optional, stage 2)
 
@@ -216,7 +219,7 @@ Modes (`client_auth.mode`):
   `X-Proxy-Key`; SDKs set it via their default-headers option). The proxy
   hashes it with SHA-256 and compares with the hashes in
   `client_auth.tokens_file` in constant time. Each line of the file is
-  `name:sha256hex`. The header is removed before forwarding. The token is
+  `name:sha256hex`; names and tokens must be unique. The header is removed before forwarding. The token is
   never logged.
 - `mtls` — the client presents a certificate in the TLS handshake, verified
   against `listen.tls.client_ca_file`. The client name is taken from the

@@ -390,7 +390,7 @@ func TestUpgradeTunnel(t *testing.T) {
 		conn.Write([]byte("echo:" + line))
 	}))
 	defer up.Close()
-	url, _, _ := startProxy(t, oneRoute(up.URL), config.Limits{})
+	url, rec, _ := startProxy(t, oneRoute(up.URL), config.Limits{})
 
 	conn, err := net.Dial("tcp", strings.TrimPrefix(url, "http://"))
 	if err != nil {
@@ -408,6 +408,13 @@ func TestUpgradeTunnel(t *testing.T) {
 	line, _ := br.ReadString('\n')
 	if line != "echo:hello\n" {
 		t.Errorf("tunnel returned %q", line)
+	}
+	conn.Close()
+	// The record covers the request up to the switch: status 101, outcome ok,
+	// latency = tunnel lifetime; tunnel bytes are not measured.
+	ev := rec.wait(t, 1)[0]
+	if ev.Status != http.StatusSwitchingProtocols || ev.Outcome != capture.OutcomeOK || ev.Headers.IsZero() {
+		t.Errorf("upgrade event: status %d outcome %s headers %v", ev.Status, ev.Outcome, ev.Headers)
 	}
 }
 

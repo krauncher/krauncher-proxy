@@ -130,6 +130,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	case <-ctx.Done():
 	}
 	log.Info("shutting down", "grace", cfg.Shutdown.Grace)
+	msrv.Drain()
 	sctx, cancel := context.WithTimeout(context.Background(), cfg.Shutdown.Grace)
 	defer cancel()
 	if err := srv.Shutdown(sctx); err != nil {

@@ -82,6 +82,7 @@ func LoadTokens(path string) ([]token, error) {
 	}
 	defer f.Close()
 	var out []token
+	names, hashes := map[string]bool{}, map[[sha256.Size]byte]bool{}
 	sc := bufio.NewScanner(f)
 	for line := 1; sc.Scan(); line++ {
 		s := strings.TrimSpace(sc.Text())
@@ -96,6 +97,12 @@ func LoadTokens(path string) ([]token, error) {
 		var t token
 		t.name = name
 		copy(t.hash[:], raw)
+		// A repeated name would make two clients indistinguishable in records
+		// and metrics; a repeated hash would make the name ambiguous.
+		if names[name] || hashes[t.hash] {
+			return nil, fmt.Errorf("client_auth.tokens_file line %d: repeated name or token", line)
+		}
+		names[name], hashes[t.hash] = true, true
 		out = append(out, t)
 	}
 	if err := sc.Err(); err != nil {
