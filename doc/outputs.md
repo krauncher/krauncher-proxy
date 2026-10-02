@@ -144,7 +144,7 @@ Example line (wrapped for reading):
  "route":"main","client":"app-a","dialect":"openai","precision":"bf16","engine":"example-engine",
  "endpoint":"chat","model":"example-model",
  "stream":true,"status":200,"outcome":"ok","error_class":null,"finish_reason":"stop",
- "req_bytes":8000,"message_count":4,"has_system":true,"tool_count":0,
+ "req_bytes":8000,"resp_bytes":30000,"message_count":4,"has_system":true,"tool_count":0,
  "max_tokens_requested":1024,"n":null,"embedding_inputs":null,
  "concurrency_at_arrival":3,"concurrency_global_at_arrival":3,
  "text_bytes":7400,"image_inputs":0,

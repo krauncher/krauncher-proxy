@@ -58,7 +58,8 @@ internal/sink/jsonl/      batching writer with rotation
 internal/metrics/         Prometheus collectors, label cache, self metrics, HTTP endpoint
 dashboards/               Grafana dashboard JSON
 deploy/                   compose stack, Prometheus config, Grafana provisioning
-tools/fakeupstream/       simulated LLM API for tests and load
+internal/fakeupstream/    simulated OpenAI-compatible API (handler, used by tests)
+tools/fakeupstream/       the same as a standalone binary for demos and load
 tools/loadgen/            load generator
 testdata/                 dialect fixtures (content replaced by placeholders)
 doc/                      this documentation

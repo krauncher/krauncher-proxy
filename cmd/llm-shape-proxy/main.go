@@ -11,14 +11,20 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"syscall"
 
 	"github.com/krauncher/krauncher-proxy/internal/auth"
 	"github.com/krauncher/krauncher-proxy/internal/config"
+	"github.com/krauncher/krauncher-proxy/internal/pipeline"
+	"github.com/krauncher/krauncher-proxy/internal/proxy"
+	"github.com/krauncher/krauncher-proxy/internal/shape"
+	"github.com/krauncher/krauncher-proxy/internal/sink/jsonl"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -76,11 +82,80 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	log.Info("starting", "version", buildVersion(), "instance", cfg.Instance.Name, "routes", len(cfg.Routes))
-	// Components (data plane, pipeline, sinks, metrics) are wired here in M1–M3.
-	<-ctx.Done()
-	log.Info("stopped")
+	if err := serve(ctx, cfg, log); err != nil {
+		log.Error("fatal", "err", err)
+		return 1
+	}
 	return 0
+}
+
+// serve runs the proxy until ctx is cancelled, then shuts down in order:
+// stop accepting and wait for in-flight requests (up to shutdown.grace),
+// drain the event queue, flush the sinks.
+func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
+	var sink *jsonl.Writer
+	if cfg.Sink.JSONL.Enabled {
+		var err error
+		if sink, err = jsonl.Open(cfg.Sink.JSONL, cfg.Instance.Name, log); err != nil {
+			return fmt.Errorf("jsonl sink: %w", err)
+		}
+	}
+	workers := cfg.Pipeline.Workers
+	if workers == 0 {
+		workers = runtime.GOMAXPROCS(0)
+	}
+	events := pipeline.New(cfg.Pipeline.QueueSize, workers, func(e shape.Event) {
+		r := shape.Build(e, cfg.Instance.Name)
+		if sink != nil {
+			sink.Submit(r)
+		}
+	})
+	// Runs on every exit path, after the server has stopped: drain the
+	// events, then flush the sink.
+	defer func() {
+		events.Close()
+		if sink != nil {
+			if err := sink.Close(); err != nil {
+				log.Error("jsonl sink close", "err", err)
+			}
+		}
+		log.Info("stopped", "events_dropped", events.Dropped())
+	}()
+	h, err := proxy.New(cfg.Routes, cfg.Limits, proxy.NewTransport(cfg.Upstream), events.Submit, log)
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{
+		Addr:              cfg.Listen.Addr,
+		Handler:           h,
+		ReadHeaderTimeout: cfg.Listen.ReadHeaderTimeout,
+		IdleTimeout:       cfg.Listen.IdleTimeout,
+		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelDebug),
+	}
+	errc := make(chan error, 1)
+	go func() {
+		if cfg.Listen.TLS.Enabled() {
+			errc <- srv.ListenAndServeTLS(cfg.Listen.TLS.CertFile, cfg.Listen.TLS.KeyFile)
+		} else {
+			errc <- srv.ListenAndServe()
+		}
+	}()
+	log.Info("listening", "addr", cfg.Listen.Addr, "version", buildVersion(), "instance", cfg.Instance.Name, "routes", len(cfg.Routes))
+
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+	}
+	log.Info("shutting down", "grace", cfg.Shutdown.Grace)
+	sctx, cancel := context.WithTimeout(context.Background(), cfg.Shutdown.Grace)
+	defer cancel()
+	if err := srv.Shutdown(sctx); err != nil {
+		log.Warn("in-flight requests cut at grace period", "err", err)
+		srv.Close()
+	}
+	log.Info("server stopped", "not_found", h.NotFound())
+	return nil
 }
 
 func newLogger(c config.Log, w io.Writer) *slog.Logger {

@@ -63,6 +63,7 @@ the proxy generated itself, plus the model name. Null means "not known", never z
 | Field | Type | Unit | Derivation |
 |---|---|---|---|
 | `req_bytes` | int | bytes | Full request body size |
+| `resp_bytes` | int | bytes | Full response body size sent to the client |
 | `message_count` | int\|null | — | Number of messages / input items |
 | `has_system` | bool\|null | — | System prompt present |
 | `tool_count` | int\|null | — | Number of tool definitions |

@@ -194,7 +194,13 @@ timeline point, and `chunks`. `endpoint: other`.
 - Hop-by-hop headers removed per RFC 9110 (this includes
   `Proxy-Authorization`). The proxy token header (`client_auth.header`) is
   removed. Everything else passes as is, including `Authorization` and
-  provider API key headers carrying the client's upstream key.
+  provider API key headers carrying the client's upstream key, and the
+  client's `Forwarded` / `X-Forwarded-*` headers: the proxy neither adds nor
+  rewrites them.
+- The upstream transport never adds `Accept-Encoding` and never decompresses,
+  so response bytes reach the client exactly as the upstream sent them.
+- Outbound connections honour `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` from
+  the environment, for networks where egress goes through a corporate proxy.
 - `Accept-Encoding` passes through. Compressed response bodies are captured
   compressed; stage 2 decompresses gzip within the capture cap. Other encodings
   (br, zstd) are recorded with `parse_error: unsupported_encoding` until a need
