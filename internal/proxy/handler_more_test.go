@@ -3,14 +3,19 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/x509"
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"net/textproto"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -316,4 +321,156 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.w.Write(p)
+}
+
+func TestTrailersPassThrough(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Trailer", "X-Checksum")
+		io.WriteString(w, "body")
+		w.Header().Set("X-Checksum", "abc")
+	}))
+	defer up.Close()
+	url, _, _ := startProxy(t, oneRoute(up.URL), config.Limits{})
+	resp, err := client.Get(url + "/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.Trailer.Get("X-Checksum") != "abc" {
+		t.Errorf("trailer %v", resp.Trailer)
+	}
+}
+
+func TestInformationalResponsesPassThrough(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Link", "</style.css>; rel=preload")
+		w.WriteHeader(http.StatusEarlyHints)
+		io.WriteString(w, "final")
+	}))
+	defer up.Close()
+	url, rec, _ := startProxy(t, oneRoute(up.URL), config.Limits{})
+	var got1xx []int
+	trace := &httptrace.ClientTrace{Got1xxResponse: func(code int, h textproto.MIMEHeader) error {
+		got1xx = append(got1xx, code)
+		return nil
+	}}
+	req, _ := http.NewRequestWithContext(httptrace.WithClientTrace(context.Background(), trace), http.MethodGet, url+"/x", nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if len(got1xx) != 1 || got1xx[0] != 103 || resp.StatusCode != 200 || string(body) != "final" {
+		t.Errorf("1xx %v status %d body %q", got1xx, resp.StatusCode, body)
+	}
+	if ev := rec.wait(t, 1)[0]; ev.Status != 200 {
+		t.Errorf("recorded status %d, want the final 200", ev.Status)
+	}
+}
+
+// Connection upgrades become a tunnel: bytes flow both ways after 101.
+func TestUpgradeTunnel(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Upgrade") != "echo" {
+			http.Error(w, "no upgrade", 400)
+			return
+		}
+		w.Header().Set("Connection", "Upgrade")
+		w.Header().Set("Upgrade", "echo")
+		w.WriteHeader(http.StatusSwitchingProtocols)
+		conn, brw, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		brw.Flush()
+		line, _ := brw.ReadString('\n')
+		conn.Write([]byte("echo:" + line))
+	}))
+	defer up.Close()
+	url, _, _ := startProxy(t, oneRoute(up.URL), config.Limits{})
+
+	conn, err := net.Dial("tcp", strings.TrimPrefix(url, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	io.WriteString(conn, "GET /x HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n")
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil || resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("upgrade response %v %v", resp, err)
+	}
+	io.WriteString(conn, "hello\n")
+	line, _ := br.ReadString('\n')
+	if line != "echo:hello\n" {
+		t.Errorf("tunnel returned %q", line)
+	}
+}
+
+// After normal, cancelled, failed and aborted requests, no goroutines remain
+// once idle connections are closed.
+func TestNoGoroutineLeak(t *testing.T) {
+	stream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for i := 0; i < 50; i++ {
+			if _, err := io.WriteString(w, "data: x\n\n"); err != nil {
+				return
+			}
+			w.(http.Flusher).Flush()
+			time.Sleep(5 * time.Millisecond)
+		}
+	}))
+	abort := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "partial")
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler)
+	}))
+	tr := NewTransport(config.Default().Upstream)
+	rec := newRecorder()
+	url, _ := startProxyWith(t, []config.Route{
+		{Name: "s", Prefix: "/s", Upstream: stream.URL, Dialect: config.DialectOpenAI},
+		{Name: "a", Prefix: "/a", Upstream: abort.URL},
+		{Name: "d", Prefix: "/d", Upstream: "http://127.0.0.1:1"},
+	}, config.Limits{}, tr, rec.emit, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c := &http.Client{Transport: &http.Transport{DisableCompression: true}}
+
+	settle := func() int {
+		c.CloseIdleConnections()
+		tr.CloseIdleConnections()
+		for range 50 {
+			time.Sleep(20 * time.Millisecond)
+		}
+		return runtime.NumGoroutine()
+	}
+	run := func() {
+		for _, p := range []string{"/s/x", "/a/x", "/d/x"} {
+			if resp, err := c.Post(url+p, "application/json", strings.NewReader(`{"stream":true}`)); err == nil {
+				io.ReadAll(resp.Body)
+				resp.Body.Close()
+			}
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url+"/s/x", strings.NewReader("{}"))
+		if resp, err := c.Do(req); err == nil {
+			bufio.NewReader(resp.Body).ReadString('\n')
+			cancel()
+			resp.Body.Close()
+		}
+		cancel()
+	}
+	run() // warm up pools and lazily started goroutines
+	before := settle()
+	for range 5 {
+		run()
+	}
+	after := settle()
+	stream.Close()
+	abort.Close()
+	if after > before+2 {
+		t.Errorf("goroutines %d → %d after 5 rounds", before, after)
+	}
 }

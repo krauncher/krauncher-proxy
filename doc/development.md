@@ -44,6 +44,8 @@
 ```
 cmd/llm-shape-proxy/      main: config load, wiring, signals, shutdown
 internal/config/          YAML + env parsing, defaults, validation
+internal/auth/            client authentication (header tokens, mTLS names)
+internal/harden/          process hardening (no core dumps, not dumpable)
 internal/proxy/           stage 1: handler, route match, transport, tee, timeline
 internal/capture/         capture buffers, head/tail ring, capture budget, Pending
 internal/pipeline/        event queue, worker pool, record queue
@@ -55,9 +57,10 @@ internal/sse/             SSE scanner shared by dialects
 internal/jsonscan/        allocation-free JSON path scanner for truncated bodies
 internal/shape/           ShapeRecord, Pending/events → record assembly, prefix estimator
 internal/sink/jsonl/      batching writer with rotation
-internal/metrics/         Prometheus collectors, label cache, self metrics, HTTP endpoint
-dashboards/               Grafana dashboard JSON
-deploy/                   compose stack, Prometheus config, Grafana provisioning
+internal/metrics/         Prometheus collectors, label bounds, metrics listener (TLS, bearer)
+dashboards/               Grafana dashboard JSON; gen/ holds its generator
+deploy/                   compose demo stack, Prometheus config, Grafana provisioning
+Dockerfile                proxy + demo tools on distroless, non-root
 internal/fakeupstream/    simulated OpenAI-compatible API (handler, used by tests)
 tools/fakeupstream/       the same as a standalone binary for demos and load;
                           -replay <dir> -speed <x> replays recordings with their timing

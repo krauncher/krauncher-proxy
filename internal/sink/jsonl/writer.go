@@ -177,8 +177,11 @@ func (w *Writer) finishFile() error {
 	}
 	w.pending = 1 // force the flush
 	w.flush()
-	name, err := w.f.Name(), w.f.Close()
+	name, empty, err := w.f.Name(), w.size == 0, w.f.Close()
 	w.f, w.buf, w.enc = nil, nil, nil
+	if empty { // nothing was written: leave no empty files behind
+		return errors.Join(err, os.Remove(name))
+	}
 	w.bgWG.Add(1)
 	go func() {
 		defer w.bgWG.Done()

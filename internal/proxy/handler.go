@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/krauncher/krauncher-proxy/internal/auth"
 	"github.com/krauncher/krauncher-proxy/internal/capture"
 	"github.com/krauncher/krauncher-proxy/internal/config"
 )
@@ -40,6 +41,7 @@ type Options struct {
 	Transport http.RoundTripper
 	Emit      Emit
 	Log       *slog.Logger
+	Auth      *auth.Authenticator // nil = client_auth off
 }
 
 // Handler is the proxy's http.Handler.
@@ -49,6 +51,7 @@ type Handler struct {
 	sem      chan struct{} // nil = unlimited
 	capture  config.Capture
 	budget   *capture.Budget
+	auth     *auth.Authenticator
 	emit     Emit
 	log      *slog.Logger
 
@@ -67,7 +70,7 @@ var forwardingHeaders = []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Ho
 
 // New builds the handler. Routes must already be validated.
 func New(o Options) (*Handler, error) {
-	h := &Handler{emit: o.Emit, log: o.Log, capture: o.Capture, budget: capture.NewBudget(int64(o.Capture.BudgetBytes))}
+	h := &Handler{emit: o.Emit, log: o.Log, capture: o.Capture, auth: o.Auth, budget: capture.NewBudget(int64(o.Capture.BudgetBytes))}
 	if o.Limits.MaxInflight > 0 {
 		h.sem = make(chan struct{}, o.Limits.MaxInflight)
 	}
@@ -116,6 +119,25 @@ func (h *Handler) NotFound() uint64 { return h.notFound.Load() }
 // BudgetUsed returns the capture memory currently reserved.
 func (h *Handler) BudgetUsed() int64 { return h.budget.Used() }
 
+// Routes returns the route names.
+func (h *Handler) Routes() []string {
+	out := make([]string, len(h.routes))
+	for i, r := range h.routes {
+		out[i] = r.cfg.Name
+	}
+	return out
+}
+
+// Inflight returns the requests currently in flight on a route.
+func (h *Handler) Inflight(route string) int64 {
+	for _, r := range h.routes {
+		if r.cfg.Name == route {
+			return r.inflight.Load()
+		}
+	}
+	return 0
+}
+
 func (h *Handler) match(path string) *route {
 	for _, r := range h.routes {
 		p := r.cfg.Prefix
@@ -148,6 +170,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := newPending(rt, r, t0)
+	client, _, ok := h.auth.Check(r)
+	if !ok {
+		h.unauthorized(w, p)
+		return
+	}
+	p.Client = client
 	if !h.admit() {
 		h.reject(w, p)
 		return
@@ -200,6 +228,14 @@ func (h *Handler) leave() {
 	if h.sem != nil {
 		<-h.sem
 	}
+}
+
+// unauthorized answers 401 and records it; nothing is forwarded or captured.
+func (h *Handler) unauthorized(w http.ResponseWriter, p *capture.Pending) {
+	http.Error(w, "unauthorized", http.StatusUnauthorized)
+	p.End, p.Status, p.Outcome = time.Now(), http.StatusUnauthorized, capture.OutcomeUnauthorized
+	p.ResolveRequest(nil)
+	h.emit(p, true)
 }
 
 // reject answers 503 at capacity and records it.

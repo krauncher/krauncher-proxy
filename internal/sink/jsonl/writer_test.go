@@ -171,3 +171,62 @@ func TestRetentionByTotalSize(t *testing.T) {
 		t.Fatalf("total %d bytes in %d files exceeds the limit", total, len(files))
 	}
 }
+
+func TestRotationByAgeAndRetentionByAge(t *testing.T) {
+	cfg := testCfg(t.TempDir())
+	cfg.Gzip, cfg.MaxAge, cfg.FlushInterval, cfg.Batch = false, 50*time.Millisecond, 10*time.Millisecond, 1
+	dir := filepath.Join(cfg.Dir, "inst")
+	os.MkdirAll(dir, 0o700)
+	old := filepath.Join(dir, "shape-20000101T000000Z.jsonl")
+	os.WriteFile(old, []byte("{}\n"), 0o600)
+	past := time.Now().Add(-30 * 24 * time.Hour)
+	os.Chtimes(old, past, past)
+
+	w, err := Open(cfg, "inst", slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Submit(record("a"))
+	time.Sleep(200 * time.Millisecond) // past max_age: the ticker rotates
+	w.Submit(record("b"))
+	w.Close()
+	files, _ := filepath.Glob(filepath.Join(dir, "shape-*.jsonl"))
+	fileOf := map[string]string{}
+	for _, f := range files {
+		data, _ := os.ReadFile(f)
+		if len(data) == 0 {
+			t.Errorf("empty file left: %s", f)
+		}
+		for _, id := range []string{"a", "b"} {
+			if strings.Contains(string(data), `"id":"`+id+`"`) {
+				fileOf[id] = f
+			}
+		}
+	}
+	if fileOf["a"] == "" || fileOf["b"] == "" || fileOf["a"] == fileOf["b"] {
+		t.Errorf("records not split by age rotation: %v", fileOf)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Error("file older than retention not deleted")
+	}
+}
+
+// A sink that cannot write counts errors and keeps running.
+func TestWriteErrorsAreCountedNotFatal(t *testing.T) {
+	cfg := testCfg(t.TempDir())
+	cfg.Gzip, cfg.MaxBytes, cfg.Batch = false, 200, 1
+	w, err := Open(cfg, "inst", log())
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.RemoveAll(cfg.Dir) // the next rotation cannot create a file
+	for i := range 20 {
+		w.Submit(record(strings.Repeat("x", i)))
+	}
+	w.Close()
+	if w.WriteErrors() == 0 {
+		t.Fatal("write errors not counted")
+	}
+}
+
+func log() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }

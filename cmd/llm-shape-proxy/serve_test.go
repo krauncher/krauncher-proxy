@@ -48,15 +48,8 @@ func startServe(t *testing.T, cfg config.Config) (context.CancelFunc, chan error
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- serve(ctx, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))) }()
-	for range 100 { // wait until the listener is up
-		if c, err := net.Dial("tcp", cfg.Listen.Addr); err == nil {
-			c.Close()
-			return cancel, done
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("proxy did not start")
-	return nil, nil
+	waitListening(t, cfg.Listen.Addr)
+	return cancel, done
 }
 
 func streamRequest(t *testing.T, addr string) *http.Response {
@@ -142,8 +135,12 @@ func TestServeListenFailureCleansUp(t *testing.T) {
 	if err == nil {
 		t.Fatal("serve succeeded on a taken port")
 	}
-	// The sink was closed: its file was finished and nothing is left open.
-	if files, _ := filepath.Glob(filepath.Join(cfg.Sink.JSONL.Dir, "test", "*")); len(files) != 1 {
-		t.Fatalf("files %v", files)
+	// The sink was opened (its directory exists) and closed: the active file,
+	// still empty, was removed on close.
+	if _, err := os.Stat(filepath.Join(cfg.Sink.JSONL.Dir, "test")); err != nil {
+		t.Fatalf("sink never opened: %v", err)
+	}
+	if files, _ := filepath.Glob(filepath.Join(cfg.Sink.JSONL.Dir, "test", "*")); len(files) != 0 {
+		t.Fatalf("files left after close: %v", files)
 	}
 }

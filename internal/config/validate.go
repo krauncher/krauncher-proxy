@@ -174,30 +174,11 @@ func (c *Config) Validate() error {
 }
 
 // rejectUnimplemented refuses options whose behaviour does not exist yet, so a
-// configuration never promises protection the proxy does not give. Remove a
-// line when its feature lands.
+// configuration never promises something the proxy does not do. Remove a line
+// when its feature lands.
 func (c *Config) rejectUnimplemented(p *problems) {
-	const msg = "not implemented yet"
-	if c.ClientAuth.Mode != AuthOff {
-		p.addf("client_auth.mode", "%s (only off)", msg)
-	}
-	if c.Listen.TLS.ClientCAFile != "" {
-		p.addf("listen.tls.client_ca_file", msg)
-	}
-	if c.Metrics.TLS != (TLS{}) {
-		p.addf("metrics.tls", msg)
-	}
-	if c.Metrics.BearerTokenFile != "" {
-		p.addf("metrics.bearer_token_file", msg)
-	}
-	if c.Metrics.Pprof {
-		p.addf("metrics.pprof", msg)
-	}
 	if c.Prefix.Enabled {
-		p.addf("prefix.enabled", msg)
-	}
-	if c.Security.Strict {
-		p.addf("security.strict", "%s: its client authentication and metrics protection are not available", msg)
+		p.addf("prefix.enabled", "not implemented yet")
 	}
 }
 
@@ -217,6 +198,9 @@ func (c *Config) validateClientAuth(p *problems) {
 			p.addf("listen.tls.client_ca_file", "required for client_auth.mode mtls")
 		}
 		oneOf(p, "client_auth.mtls.name_from", a.MTLS.NameFrom, "cn", "san_dns")
+	}
+	if c.Listen.TLS.ClientCAFile != "" && a.Mode != AuthMTLS {
+		p.addf("listen.tls.client_ca_file", "only used with client_auth.mode mtls")
 	}
 }
 

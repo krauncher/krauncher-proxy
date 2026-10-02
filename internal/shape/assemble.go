@@ -153,7 +153,7 @@ func (a *Assembler) build(p *capture.Pending, ep dialect.Endpoint, req dialect.R
 		ID:                         p.ID,
 		Instance:                   a.Instance,
 		Route:                      p.Route,
-		Client:                     optional(p.Client),
+		Client:                     optional(sanitizeOptional(p.Client)),
 		Dialect:                    p.Dialect,
 		Precision:                  optional(p.Precision),
 		Engine:                     optional(p.Engine),
@@ -278,6 +278,13 @@ func captureState(p *capture.Pending, req dialect.Request) string {
 		}
 	}
 	return CaptureFull
+}
+
+func sanitizeOptional(s string) string {
+	if s == "" {
+		return ""
+	}
+	return dialect.SanitizeName(s)
 }
 
 func firstNonEmpty(s ...string) string {

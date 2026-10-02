@@ -10,10 +10,7 @@ no hot reload; restart to apply changes.
 
 Options whose feature is not implemented yet are refused at startup rather than
 accepted silently, so a configuration never promises protection the proxy does
-not give. Currently refused: `client_auth.mode` other than `off`,
-`listen.tls.client_ca_file`, `metrics.tls`, `metrics.bearer_token_file`,
-`metrics.pprof`, `prefix.enabled`, `security.strict`. The metrics listener is
-not started yet either (M3).
+not give. Currently refused: `prefix.enabled` (M4).
 
 ## Full example with defaults
 

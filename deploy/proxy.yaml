@@ -1,0 +1,19 @@
+# Demo configuration for deploy/compose.yaml. Inside the compose network the
+# metrics listener binds all interfaces so Prometheus can scrape it; it is not
+# published on the host.
+instance:
+  name: demo
+listen:
+  addr: "0.0.0.0:8080"
+metrics:
+  listen: "0.0.0.0:9090"
+routes:
+  - name: ollama-qwen35
+    prefix: /
+    upstream: http://upstream:8081
+    dialect: openai
+    precision: q8_0
+    engine: ollama
+log:
+  level: info
+  format: text

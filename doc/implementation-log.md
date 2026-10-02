@@ -11,7 +11,7 @@ Milestone definitions are in [development.md](development.md).
 | 0 | Skeleton: module, CI, config, `cmd/llm-shape-proxy` | done |
 | M1 | Pass-through proxy, timings, generic records, JSONL sink, fakeupstream | done |
 | M2 | Capture, pipeline events, jsonscan, SSE, `openai` dialect, estimation, `stream_usage` | done |
-| M3 | Prometheus metrics, shape cell, dashboard, compose, cheap security measures | not started |
+| M3 | Prometheus metrics, shape cell, dashboard, compose, cheap security measures | done (compose run pending) |
 | M2b | `anthropic` dialect | not started |
 | M4 | Prefix repetition estimator | not started |
 | M5 | Measured performance work | not started |
@@ -285,3 +285,43 @@ No behaviour change beyond item 10; all tests unchanged and passing.
   a length and LLM APIs read the body first; noted for M5 load tests.
 - Also fixed: `TestStalledPipelineDoesNotBlockTraffic` read the drop counter
   before the last handler had emitted; it now waits for the exact count.
+
+### 2026-10-02 — M3: metrics, security, demo stack
+
+- `internal/metrics`: every shape metric from `outputs.md` (requests, token
+  histograms and totals with the `usage` label, TTFT, latency, decode rate,
+  sizes, concurrency, shape cell, cached tokens, usage missing, capture state,
+  parse errors), model label bounded by allowlist or first N, optional
+  `client` label bounded by the authenticator's names. Self metrics read on
+  scrape (queue, drops, stage-2 panics, worker busy time, capture memory,
+  unrouted, in-flight per route, sink drops and errors, auth failures).
+  Failed requests are counted but kept out of the shape histograms.
+- Metrics listener: separate from the proxy, `/metrics`, `/healthz`,
+  `/readyz`, optional pprof, TLS, client certificates, bearer token (compared
+  in constant time).
+- `internal/auth`: header tokens (SHA-256 hashes in a file, constant-time
+  comparison against every entry, header removed before forwarding) and mTLS
+  (chain verified by TLS, name from CN or DNS SAN, optional allowlist).
+  Unauthenticated requests get 401, are not forwarded, and are recorded as
+  `unauthorized`.
+- Proxy listener TLS with optional client certificate verification.
+- `internal/harden`: `RLIMIT_CORE` 0 and `PR_SET_DUMPABLE` 0 at startup
+  (Linux; a warning elsewhere).
+- Options refused at startup now: only `prefix.enabled` (M4). Strict mode
+  works.
+- JSONL: an active file with no records is removed on rotation and close
+  instead of being kept empty.
+- Tests: metrics observation, label bounds, cell buckets, metrics listener
+  bearer; TLS listener with header auth, strict mode and metrics end to end;
+  mTLS (allowed, outside the allowlist, no certificate); tests deferred from
+  M1 — JSONL age rotation, age retention, write errors, trailers, 103 Early
+  Hints, upgrade tunnel, goroutine leaks. A data race in `serve` (reading
+  `TLSConfig` while `Serve` set up HTTP/2) found by `-race` and fixed. Full
+  suite stable: 0 failures in 6 × 3 parallel runs.
+- Demo: `tools/loadgen` (sends replay-set requests with `X-Fixture`),
+  `Dockerfile` (distroless, non-root, proxy + demo tools + replay set),
+  `deploy/compose.yaml` (replaying upstream, proxy, loadgen, Prometheus,
+  Grafana), `dashboards/shape-overview.json` from
+  `dashboards/gen/shape_overview.py`.
+- Not yet verified: the compose stack has not been run (needs the base images
+  pulled), so dashboard queries are untested against a live Prometheus.
