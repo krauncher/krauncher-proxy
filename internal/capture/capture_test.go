@@ -42,6 +42,13 @@ func TestBufferStopsWhenBudgetExhausted(t *testing.T) {
 	if NewRing(64, b) != nil {
 		t.Fatal("ring allocated beyond the budget")
 	}
+	if NewRing(0, NewBudget(100)) != nil {
+		t.Fatal("zero-size ring allocated")
+	}
+	z := NewBuffer(-1, 0, NewBudget(100))
+	if z.Write([]byte("x")) != 0 || !z.Truncated() {
+		t.Fatal("negative-limit buffer kept bytes")
+	}
 }
 
 // The ring holds exactly the last size bytes, whatever the write sizes.

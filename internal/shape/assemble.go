@@ -5,8 +5,11 @@ package shape
 import (
 	"bytes"
 	"compress/gzip"
+	"fmt"
 	"io"
+	"log/slog"
 	"math"
+	"sync/atomic"
 	"time"
 
 	"github.com/krauncher/krauncher-proxy/internal/capture"
@@ -35,7 +38,13 @@ type Assembler struct {
 	RequestWait time.Duration
 	MaxBody     int // decompression cap for compressed bodies
 	Out         func(Record)
+	Log         *slog.Logger // may be nil
+
+	panics atomic.Uint64
 }
+
+// Panics returns the number of jobs whose processing panicked.
+func (a *Assembler) Panics() uint64 { return a.panics.Load() }
 
 func dialectOf(p *capture.Pending) dialect.Dialect {
 	if d, ok := Dialects[p.Dialect]; ok {
@@ -44,8 +53,27 @@ func dialectOf(p *capture.Pending) dialect.Dialect {
 	return dialect.Generic{}
 }
 
-// Handle runs one job. It never panics on input; buffers are released here.
+// Handle runs one job and releases its buffers. A panic (a parser bug on
+// unexpected input) drops the record, never the process: buffers are released,
+// a waiting response side is unblocked, and the request ID is logged, never
+// content.
 func (a *Assembler) Handle(j Job) {
+	defer func() {
+		if r := recover(); r != nil {
+			a.panics.Add(1)
+			if j.Response {
+				j.P.ReleaseResponse()
+			} else {
+				if j.P.Req != nil {
+					j.P.Req.Release()
+				}
+				j.P.ResolveRequest(nil)
+			}
+			if a.Log != nil {
+				a.Log.Error("stage 2 panic", "id", j.P.ID, "route", j.P.Route, "response", j.Response, "panic", fmt.Sprint(r))
+			}
+		}
+	}()
 	if j.Response {
 		a.response(j.P)
 	} else {
@@ -76,7 +104,7 @@ func (a *Assembler) response(p *capture.Pending) {
 	}
 
 	resp := dialect.Response{UsageSource: dialect.UsageNone, FirstContentEnd: -1}
-	if p.Capture && p.Head != nil {
+	if p.Captured && p.Head != nil {
 		rc := dialect.ResponseCapture{
 			Status: p.Status, Stream: p.Stream,
 			Body: p.Head.Bytes(), Truncated: p.Head.Truncated() || p.TailFailed,
@@ -176,7 +204,7 @@ func (a *Assembler) build(p *capture.Pending, ep dialect.Endpoint, req dialect.R
 		chunks, events := p.TimelineTotal, p.SSE.Events()
 		r.Chunks, r.SSEEvents = &chunks, &events
 	}
-	if r.UsageSource == UsageNone && p.StreamUsage != config.StreamUsageOff && p.Capture && p.Status < 400 {
+	if r.UsageSource == UsageNone && p.StreamUsage != config.StreamUsageOff && p.Captured && p.Status < 400 {
 		a.estimate(&r, p, req, resp)
 	}
 	a.timing(&r, p, resp)
@@ -240,7 +268,7 @@ func (a *Assembler) timing(r *Record, p *capture.Pending, resp dialect.Response)
 
 func captureState(p *capture.Pending, req dialect.Request) string {
 	switch {
-	case !p.Capture:
+	case !p.Captured:
 		return CaptureSkipped
 	case req.Truncated || p.TailFailed || (p.Head != nil && p.Head.Truncated() && p.Tail == nil):
 		return CaptureTruncated

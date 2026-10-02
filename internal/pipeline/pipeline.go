@@ -20,6 +20,7 @@ type Queue[T any] struct {
 	mu      sync.RWMutex // guards closed against Submit racing Close
 	closed  bool
 	dropped atomic.Uint64
+	panics  atomic.Uint64
 }
 
 // New starts workers goroutines (at least one) reading a queue of size items.
@@ -31,12 +32,26 @@ func New[T any](size, workers int, handle func(T)) *Queue[T] {
 		go func() {
 			defer q.wg.Done()
 			for item := range q.ch {
-				q.handle(item)
+				q.run(item)
 			}
 		}()
 	}
 	return q
 }
+
+// run handles one item; a panic is counted and the worker goes on. Handlers
+// should recover themselves to clean up; this is the last line of defence.
+func (q *Queue[T]) run(item T) {
+	defer func() {
+		if recover() != nil {
+			q.panics.Add(1)
+		}
+	}()
+	q.handle(item)
+}
+
+// Panics returns the number of items whose handler panicked.
+func (q *Queue[T]) Panics() uint64 { return q.panics.Load() }
 
 // Submit enqueues item without blocking. It reports false if the item was
 // dropped because the queue is full or closed.

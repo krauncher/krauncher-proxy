@@ -142,7 +142,7 @@ func parsePlain(r *dialect.Response, rc dialect.ResponseCapture) {
 		}
 		setFinish(r, v.finish, v.status)
 		out := v.text
-		r.OutputTextBytes, r.OutputTextBytesSource = &out, "exact"
+		r.OutputTextBytes, r.OutputTextBytesSource = &out, dialect.OutputExact
 		return
 	}
 	// Oversized body: the usage object is near the end; scan it from the tail.
@@ -219,7 +219,7 @@ func parseStream(r *dialect.Response, rc dialect.ResponseCapture) {
 			}
 			text += v.text
 		})
-		r.OutputTextBytes, r.OutputTextBytesSource = &text, "exact"
+		r.OutputTextBytes, r.OutputTextBytesSource = &text, dialect.OutputExact
 	} else {
 		// Head: first content event. Tail: final usage, finish reason.
 		// Both: the mean per-event envelope of content events (bytes that are
@@ -256,7 +256,7 @@ func parseStream(r *dialect.Response, rc dialect.ResponseCapture) {
 			n := rc.SSEEvents - r.Overhead
 			derived := int(float64(rc.Total) - float64(n)*mean - float64(fixed))
 			derived = max(derived, 0)
-			r.OutputTextBytes, r.OutputTextBytesSource = &derived, "derived"
+			r.OutputTextBytes, r.OutputTextBytesSource = &derived, dialect.OutputDerived
 		}
 		if r.FirstContentEnd < 0 {
 			r.ParseError = "head_overflow"

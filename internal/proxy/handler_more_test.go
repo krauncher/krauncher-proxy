@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/x509"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -88,10 +89,53 @@ func TestStalledPipelineDoesNotBlockTraffic(t *testing.T) {
 	if el := time.Since(start); el > 3*time.Second {
 		t.Errorf("%d requests took %v with a stalled pipeline", n, el)
 	}
-	if q.Dropped() < n-2 {
-		t.Errorf("dropped %d, want at least %d", q.Dropped(), n-2)
+	// One event is held by the stalled worker and one is queued; the rest are
+	// dropped. The last handler may still be emitting after the client got its
+	// response, so wait briefly for the count.
+	deadline := time.Now().Add(2 * time.Second)
+	for q.Dropped() < n-2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if q.Dropped() != n-2 {
+		t.Errorf("dropped %d, want %d", q.Dropped(), n-2)
 	}
 }
+
+// After the declared length the body wrapper reports EOF itself and never
+// reads the server's body again, so a body that net/http has already closed
+// cannot fail the transport's final read.
+func TestBodyEOFAtContentLength(t *testing.T) {
+	under := &strictBody{data: []byte("0123456789")}
+	b := &countingBody{ReadCloser: under, p: capture.NewPending(), emit: func(*capture.Pending, bool) bool { return true }, length: 10}
+	got, err := io.ReadAll(b)
+	if err != nil || string(got) != "0123456789" {
+		t.Fatalf("read %q, %v", got, err)
+	}
+	under.closed = true // as net/http does once it has drained the body
+	if n, err := b.Read(make([]byte, 8)); n != 0 || err != io.EOF {
+		t.Fatalf("read after the end: %d, %v", n, err)
+	}
+	if b.end.Load() == nil {
+		t.Fatal("EOF time not recorded")
+	}
+}
+
+// strictBody fails any read after Close, like net/http's request body.
+type strictBody struct {
+	data   []byte
+	closed bool
+}
+
+func (s *strictBody) Read(p []byte) (int, error) {
+	if s.closed {
+		return 0, errors.New("http: invalid Read on closed Body")
+	}
+	n := copy(p, s.data)
+	s.data = s.data[n:]
+	return n, nil // never io.EOF: the wrapper must stop by length
+}
+
+func (s *strictBody) Close() error { s.closed = true; return nil }
 
 func TestTLSUpstream(t *testing.T) {
 	protos := make(chan int, 1)

@@ -75,6 +75,13 @@ type Visitor interface {
 // ErrSyntax reports malformed JSON (as opposed to truncated JSON).
 var ErrSyntax = errors.New("jsonscan: syntax error")
 
+// ErrTooDeep reports nesting beyond MaxDepth. Bodies come from clients, so
+// recursion must be bounded.
+var ErrTooDeep = errors.New("jsonscan: nesting too deep")
+
+// MaxDepth is the deepest nesting of objects and arrays accepted.
+const MaxDepth = 256
+
 // Scan walks buf. complete is true when one whole top-level value was read.
 // A truncated buffer returns complete=false and a nil error.
 func Scan(buf []byte, v Visitor) (complete bool, err error) {
@@ -83,10 +90,11 @@ func Scan(buf []byte, v Visitor) (complete bool, err error) {
 }
 
 type scanner struct {
-	buf  []byte
-	i    int
-	v    Visitor
-	path Path
+	buf   []byte
+	i     int
+	v     Visitor
+	path  Path
+	depth int
 }
 
 var errEOF = errors.New("eof") // internal: ran out of input
@@ -121,9 +129,14 @@ func (s *scanner) value() error {
 	}
 	start := s.i
 	switch c := s.buf[s.i]; {
-	case c == '{':
-		return s.object(start)
-	case c == '[':
+	case c == '{' || c == '[':
+		if s.depth++; s.depth > MaxDepth {
+			return ErrTooDeep
+		}
+		defer func() { s.depth-- }()
+		if c == '{' {
+			return s.object(start)
+		}
 		return s.array(start)
 	case c == '"':
 		end, err := stringEnd(s.buf, s.i)

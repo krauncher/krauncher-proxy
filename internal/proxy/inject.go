@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/krauncher/krauncher-proxy/internal/capture"
 	"github.com/krauncher/krauncher-proxy/internal/config"
@@ -17,17 +18,24 @@ import (
 // streaming OpenAI-style request without stream_options.include_usage, add it,
 // so the stream ends with a usage chunk. Only when the whole body fits the
 // request capture cap; otherwise the request passes unmodified.
-func (h *Handler) maybeInject(r *http.Request, p *capture.Pending, rc config.Route) {
+//
+// The body is read from the client here, before forwarding, so the client's
+// upload ends now, not when the transport reads the buffered copy. The
+// returned pre-read records that moment and how many bytes the proxy added,
+// so the record keeps the client's own upload time and body size.
+func (h *Handler) maybeInject(r *http.Request, p *capture.Pending, rc config.Route) (pre preRead) {
 	if rc.Dialect != config.DialectOpenAI || r.Method != http.MethodPost ||
 		r.ContentLength <= 0 || r.ContentLength > int64(h.capture.RequestMaxBytes) {
-		return
+		return pre
 	}
 	orig, err := io.ReadAll(io.LimitReader(r.Body, r.ContentLength))
 	rest := r.Body
 	body := orig
 	if err == nil && int64(len(orig)) == r.ContentLength {
+		pre.done = time.Now()
 		if nb, ok := injectUsage(orig); ok {
 			body, p.Injected = nb, true
+			pre.added = int64(len(nb) - len(orig))
 			r.ContentLength = int64(len(nb))
 			r.Header.Set("Content-Length", strconv.Itoa(len(nb)))
 		}
@@ -36,18 +44,26 @@ func (h *Handler) maybeInject(r *http.Request, p *capture.Pending, rc config.Rou
 		io.Reader
 		io.Closer
 	}{io.MultiReader(bytes.NewReader(body), rest), rest}
+	return pre
+}
+
+// preRead describes a request body read by the proxy before forwarding.
+type preRead struct {
+	done  time.Time // when the client's body was fully read; zero if not
+	added int64     // bytes the proxy inserted
 }
 
 // injectVisitor finds what injectUsage needs at the top level.
 type injectVisitor struct {
-	root         int // offset of the root '{'
-	stream       bool
-	soStart      int // offset of stream_options '{', or -1
-	soMembers    int
-	soIsObject   bool
-	includeUsage bool
-	soPresent    bool
 	rootIsObject bool
+	root         int  // offset of the root '{'
+	stream       bool // "stream": true
+
+	soPresent    bool // "stream_options" exists, with any value
+	soIsObject   bool
+	soStart      int // offset of its '{', or -1
+	soMembers    int
+	includeUsage bool // stream_options.include_usage exists, with any value
 }
 
 func (v *injectVisitor) Start(p jsonscan.Path, k jsonscan.Kind, off int) {

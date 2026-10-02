@@ -124,7 +124,9 @@ Route option `stream_usage`, values:
   only after checking the clients behind that route. The rewrite happens on the
   data plane, so it needs the whole request body: it applies only when
   `Content-Length ≤ request_max_bytes`, otherwise the request passes unmodified
-  and falls back to estimation.
+  and falls back to estimation. The record still describes the client's
+  request: `req_bytes` excludes the inserted bytes and `upload_ms` ends when
+  the client's body was read, not when the buffered copy was forwarded.
 - `off`: no injection, no estimation; tokens null (`usage_source: none`).
 
 Anthropic streams always carry usage, so the option has no effect there.

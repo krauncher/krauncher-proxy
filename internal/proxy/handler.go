@@ -147,45 +147,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	p := capture.NewPending()
-	p.ID, p.Route, p.Dialect = newID(), rt.cfg.Name, rt.cfg.Dialect
-	p.Precision, p.Engine, p.StreamUsage = rt.cfg.Precision, rt.cfg.Engine, rt.cfg.StreamUsage
-	p.Path, p.T0 = r.URL.Path, t0
-	if h.sem != nil {
-		select {
-		case h.sem <- struct{}{}:
-			defer func() { <-h.sem }()
-		default:
-			http.Error(w, "proxy at capacity", http.StatusServiceUnavailable)
-			p.End, p.Status, p.Outcome = time.Now(), http.StatusServiceUnavailable, capture.OutcomeProxyError
-			p.ResolveRequest(nil)
-			h.emit(p, true)
-			return
-		}
+	p := newPending(rt, r, t0)
+	if !h.admit() {
+		h.reject(w, p)
+		return
 	}
+	defer h.leave()
 	p.InflightGlobal = h.inflight.Add(1)
 	defer h.inflight.Add(-1)
 	p.InflightRoute = rt.inflight.Add(1)
 	defer rt.inflight.Add(-1)
 
-	// Capture only where a dialect can use it; generic routes get timings,
-	// sizes and the SSE counter only.
-	p.Capture = h.capture.Enabled && rt.cfg.Dialect != config.DialectGeneric
-	if p.Capture && rt.cfg.StreamUsage == config.StreamUsageInject {
-		h.maybeInject(r, p, rt.cfg)
-	}
-
-	var body *countingBody
-	if r.Body == nil || r.Body == http.NoBody {
-		p.ReqEnd = t0
-		p.ResolveRequest(nil)
-	} else {
-		body = &countingBody{ReadCloser: r.Body, p: p, emit: h.emit}
-		if p.Capture {
-			body.buf = capture.NewBuffer(int(h.capture.RequestMaxBytes), int(h.capture.BudgetStep), h.budget)
-		}
-		r.Body = body
-	}
+	body, pre := h.prepareRequest(r, p, rt.cfg)
 	st := &state{p: p}
 	cw := &countingWriter{ResponseWriter: w, h: h, p: p}
 
@@ -194,31 +167,95 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// panic goes on to the server, which closes the connection.
 	defer func() {
 		rec := recover()
-		p.End = time.Now()
-		p.Status = cw.status
-		if body != nil {
-			body.finish(false)
-			p.ReqBytes = body.n.Load()
-			if t := body.end.Load(); t != nil {
-				p.ReqEnd = *t
-			}
-		}
-		switch {
-		case r.Context().Err() != nil:
-			p.Outcome = capture.OutcomeClientCancelled
-		case st.upstreamError || rec != nil:
-			p.Outcome = capture.OutcomeUpstreamError
-		default:
-			p.Outcome = capture.OutcomeOK
-		}
-		if !h.emit(p, true) {
-			p.ReleaseResponse()
-		}
+		h.finish(r, p, cw, body, pre, st.upstreamError || rec != nil)
 		if rec != nil {
 			panic(rec)
 		}
 	}()
 	rt.proxy.ServeHTTP(cw, r.WithContext(context.WithValue(r.Context(), stateKey{}, st)))
+}
+
+func newPending(rt *route, r *http.Request, t0 time.Time) *capture.Pending {
+	p := capture.NewPending()
+	p.ID, p.Route, p.Dialect = newID(), rt.cfg.Name, rt.cfg.Dialect
+	p.Precision, p.Engine, p.StreamUsage = rt.cfg.Precision, rt.cfg.Engine, rt.cfg.StreamUsage
+	p.Path, p.T0 = r.URL.Path, t0
+	return p
+}
+
+// admit takes an in-flight slot; false when limits.max_inflight is reached.
+func (h *Handler) admit() bool {
+	if h.sem == nil {
+		return true
+	}
+	select {
+	case h.sem <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *Handler) leave() {
+	if h.sem != nil {
+		<-h.sem
+	}
+}
+
+// reject answers 503 at capacity and records it.
+func (h *Handler) reject(w http.ResponseWriter, p *capture.Pending) {
+	http.Error(w, "proxy at capacity", http.StatusServiceUnavailable)
+	p.End, p.Status, p.Outcome = time.Now(), http.StatusServiceUnavailable, capture.OutcomeProxyError
+	p.ResolveRequest(nil)
+	h.emit(p, true)
+}
+
+// prepareRequest decides on capture, applies stream_usage: inject and wraps
+// the body. Capture happens only where a dialect can use it; generic routes
+// get timings, sizes and the SSE counter only. body is nil without a body.
+func (h *Handler) prepareRequest(r *http.Request, p *capture.Pending, rc config.Route) (body *countingBody, pre preRead) {
+	p.Captured = h.capture.Enabled && rc.Dialect != config.DialectGeneric
+	if p.Captured && rc.StreamUsage == config.StreamUsageInject {
+		pre = h.maybeInject(r, p, rc)
+	}
+	if r.Body == nil || r.Body == http.NoBody {
+		p.ReqEnd = p.T0
+		p.ResolveRequest(nil)
+		return nil, pre
+	}
+	body = &countingBody{ReadCloser: r.Body, p: p, emit: h.emit, length: r.ContentLength}
+	if p.Captured {
+		body.buf = capture.NewBuffer(int(h.capture.RequestMaxBytes), int(h.capture.BudgetStep), h.budget)
+	}
+	r.Body = body
+	return body, pre
+}
+
+// finish completes the measurements and hands the response side to stage 2.
+func (h *Handler) finish(r *http.Request, p *capture.Pending, cw *countingWriter, body *countingBody, pre preRead, upstreamError bool) {
+	p.End = time.Now()
+	p.Status = cw.status
+	if body != nil {
+		body.finish(false)
+		p.ReqBytes = body.n.Load() - pre.added
+		if t := body.end.Load(); t != nil {
+			p.ReqEnd = *t
+		}
+		if !pre.done.IsZero() {
+			p.ReqEnd = pre.done
+		}
+	}
+	switch {
+	case r.Context().Err() != nil:
+		p.Outcome = capture.OutcomeClientCancelled
+	case upstreamError:
+		p.Outcome = capture.OutcomeUpstreamError
+	default:
+		p.Outcome = capture.OutcomeOK
+	}
+	if !h.emit(p, true) {
+		p.ReleaseResponse()
+	}
 }
 
 func onHeaders(res *http.Response) error {
@@ -249,11 +286,19 @@ func newID() string {
 // countingBody measures and captures the request body. The transport reads it
 // from its own goroutine, possibly after ServeHTTP has returned; the mutex
 // guards the capture buffer, the atomics the measurements.
+//
+// With a known length it reports EOF itself, together with the last bytes,
+// and never reads the server's body again after that. Otherwise the
+// transport's final EOF probe can reach the server's body after net/http has
+// drained and closed it (it does so when the response headers are written,
+// server.go "fullDuplex"); the probe then fails, the transport treats that as a
+// write error and drops the upstream connection, cutting the response.
 type countingBody struct {
 	io.ReadCloser
-	p    *capture.Pending
-	emit Emit
-	buf  *capture.Buffer // nil = no capture
+	p      *capture.Pending
+	emit   Emit
+	buf    *capture.Buffer // nil = no capture
+	length int64           // Content-Length, or -1 / 0 when unknown or empty
 
 	n   atomic.Int64
 	end atomic.Pointer[time.Time]
@@ -263,8 +308,14 @@ type countingBody struct {
 }
 
 func (b *countingBody) Read(p []byte) (int, error) {
+	if b.length > 0 && b.n.Load() >= b.length {
+		return 0, io.EOF // complete: never touch the server's body again
+	}
 	n, err := b.ReadCloser.Read(p)
-	b.n.Add(int64(n))
+	total := b.n.Add(int64(n))
+	if err == nil && b.length > 0 && total >= b.length {
+		err = io.EOF
+	}
 	if n > 0 && b.buf != nil {
 		b.mu.Lock()
 		if !b.closed {
@@ -326,7 +377,7 @@ func (w *countingWriter) start() {
 	p.ContentEncoding = w.Header().Get("Content-Encoding")
 	mt, _, _ := mime.ParseMediaType(p.ContentType)
 	p.Stream = mt == "text/event-stream"
-	if p.Capture {
+	if p.Captured {
 		limit := c.ResponseMaxBytes
 		if p.Stream {
 			limit = c.ResponseHeadBytes

@@ -61,6 +61,21 @@ func tlsPair(p *problems, key string, t TLS) {
 	}
 }
 
+// sameListener reports whether two listen addresses would bind the same
+// port: equal ports, and equal hosts or either host binding all interfaces.
+func sameListener(a, b string) bool {
+	ha, pa, errA := net.SplitHostPort(a)
+	hb, pb, errB := net.SplitHostPort(b)
+	if errA != nil || errB != nil {
+		return a == b
+	}
+	if pa != pb {
+		return false
+	}
+	wildcard := func(h string) bool { return h == "" || h == "0.0.0.0" || h == "::" }
+	return wildcard(ha) || wildcard(hb) || strings.EqualFold(ha, hb)
+}
+
 // IsLoopback reports whether a listen address binds only to loopback.
 // An empty host (":8080") binds all interfaces and is not loopback.
 func IsLoopback(addr string) bool {
@@ -86,8 +101,8 @@ func (c *Config) Validate() error {
 	if _, _, err := net.SplitHostPort(c.Metrics.Listen); err != nil {
 		p.addf("metrics.listen", "%v", err)
 	}
-	if c.Listen.Addr == c.Metrics.Listen {
-		p.addf("metrics.listen", "must differ from listen.addr")
+	if sameListener(c.Listen.Addr, c.Metrics.Listen) {
+		p.addf("metrics.listen", "must not use the same address and port as listen.addr")
 	}
 	tlsPair(&p, "listen.tls", c.Listen.TLS)
 	tlsPair(&p, "metrics.tls", c.Metrics.TLS)
@@ -154,7 +169,36 @@ func (c *Config) Validate() error {
 	if c.Security.Strict {
 		c.validateStrict(&p)
 	}
+	c.rejectUnimplemented(&p)
 	return errors.Join(p...)
+}
+
+// rejectUnimplemented refuses options whose behaviour does not exist yet, so a
+// configuration never promises protection the proxy does not give. Remove a
+// line when its feature lands.
+func (c *Config) rejectUnimplemented(p *problems) {
+	const msg = "not implemented yet"
+	if c.ClientAuth.Mode != AuthOff {
+		p.addf("client_auth.mode", "%s (only off)", msg)
+	}
+	if c.Listen.TLS.ClientCAFile != "" {
+		p.addf("listen.tls.client_ca_file", msg)
+	}
+	if c.Metrics.TLS != (TLS{}) {
+		p.addf("metrics.tls", msg)
+	}
+	if c.Metrics.BearerTokenFile != "" {
+		p.addf("metrics.bearer_token_file", msg)
+	}
+	if c.Metrics.Pprof {
+		p.addf("metrics.pprof", msg)
+	}
+	if c.Prefix.Enabled {
+		p.addf("prefix.enabled", msg)
+	}
+	if c.Security.Strict {
+		p.addf("security.strict", "%s: its client authentication and metrics protection are not available", msg)
+	}
 }
 
 func (c *Config) validateClientAuth(p *problems) {

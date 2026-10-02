@@ -110,6 +110,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Estimate:    cfg.Estimate,
 		RequestWait: cfg.Pipeline.RequestWait,
 		MaxBody:     int(cfg.Capture.ResponseMaxBytes),
+		Log:         log,
 		Out: func(r shape.Record) {
 			if sink != nil {
 				sink.Submit(r)

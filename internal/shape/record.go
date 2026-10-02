@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/krauncher/krauncher-proxy/internal/capture"
+	"github.com/krauncher/krauncher-proxy/internal/dialect"
 )
 
 // Outcome values.
@@ -29,11 +30,11 @@ const (
 
 // Usage sources.
 const (
-	UsageResponse    = "response"
-	UsageStreamFinal = "stream_final"
-	UsageInjected    = "injected"
-	UsageEstimated   = "estimated"
-	UsageNone        = "none"
+	UsageResponse    = dialect.UsageResponse
+	UsageStreamFinal = dialect.UsageStreamFinal
+	UsageNone        = dialect.UsageNone
+	UsageInjected    = "injected"  // stream_final, after the proxy asked for it
+	UsageEstimated   = "estimated" // computed by the proxy
 )
 
 // Record is one exported line. Field order and names follow

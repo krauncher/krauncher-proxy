@@ -115,6 +115,17 @@ func TestSyntaxErrors(t *testing.T) {
 	}
 }
 
+func TestDepthLimit(t *testing.T) {
+	ok := strings.Repeat("[", MaxDepth) + strings.Repeat("]", MaxDepth)
+	if complete, err := Scan([]byte(ok), &collector{}); !complete || err != nil {
+		t.Fatalf("depth %d: complete=%v err=%v", MaxDepth, complete, err)
+	}
+	deep := strings.Repeat("[", 1<<20) // a hostile 1 MiB body
+	if _, err := Scan([]byte(deep), &collector{}); err != ErrTooDeep {
+		t.Fatalf("1 MiB of '[': err=%v, want ErrTooDeep", err)
+	}
+}
+
 func TestMatch(t *testing.T) {
 	p := Path{{Key: []byte("messages")}, {Index: 3}, {Key: []byte("content")}}
 	if !p.Match("messages", "*", "content") || p.Match("messages", "content") || p.Match("messages", "*", "role") {

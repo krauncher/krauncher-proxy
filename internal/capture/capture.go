@@ -52,7 +52,7 @@ type Buffer struct {
 }
 
 func NewBuffer(limit, step int, budget *Budget) *Buffer {
-	return &Buffer{limit: limit, step: max(step, 1), budget: budget}
+	return &Buffer{limit: max(limit, 0), step: max(step, 1), budget: budget}
 }
 
 // Write keeps what fits and returns how many bytes it kept. Once a byte has
@@ -99,9 +99,10 @@ type Ring struct {
 	budget *Budget
 }
 
-// NewRing reserves size bytes, or returns nil if the budget is exhausted.
+// NewRing reserves size bytes, or returns nil if size is not positive or the
+// budget is exhausted.
 func NewRing(size int, budget *Budget) *Ring {
-	if !budget.TryAcquire(int64(size)) {
+	if size <= 0 || !budget.TryAcquire(int64(size)) {
 		return nil
 	}
 	return &Ring{buf: make([]byte, size), budget: budget}
@@ -170,7 +171,7 @@ type Pending struct {
 	Status                        int
 	Outcome                       string
 
-	Capture bool // capture was attempted for this request
+	Captured bool // body capture was attempted for this request
 
 	// Request side. Req is nil when nothing was captured.
 	Req           *Buffer

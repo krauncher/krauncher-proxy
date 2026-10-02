@@ -22,6 +22,23 @@ func TestQueueProcessesAllAndDrainsOnClose(t *testing.T) {
 	}
 }
 
+func TestPanicDoesNotStopWorkers(t *testing.T) {
+	var n atomic.Int64
+	q := New(10, 1, func(i int) {
+		if i%2 == 0 {
+			panic("boom")
+		}
+		n.Add(1)
+	})
+	for i := range 6 {
+		q.Submit(i)
+	}
+	q.Close()
+	if n.Load() != 3 || q.Panics() != 3 {
+		t.Fatalf("processed %d, panics %d", n.Load(), q.Panics())
+	}
+}
+
 func TestQueueDropsWhenFullAndAfterClose(t *testing.T) {
 	block, started := make(chan struct{}), make(chan struct{}, 3)
 	q := New(2, 1, func(int) { started <- struct{}{}; <-block })

@@ -19,6 +19,7 @@ import (
 
 	"github.com/krauncher/krauncher-proxy/internal/capture"
 	"github.com/krauncher/krauncher-proxy/internal/config"
+	"github.com/krauncher/krauncher-proxy/internal/dialect"
 	"github.com/krauncher/krauncher-proxy/internal/fakeupstream"
 	"github.com/krauncher/krauncher-proxy/internal/pipeline"
 	"github.com/krauncher/krauncher-proxy/internal/proxy"
@@ -286,8 +287,9 @@ func TestEstimationAndInjection(t *testing.T) {
 	if !bytes.Contains(injectedBody, []byte(`"usage"`)) {
 		t.Error("injected request did not produce a usage chunk")
 	}
-	if inj.ReqBytes <= plain.ReqBytes {
-		t.Errorf("injected request size %d not above original %d", inj.ReqBytes, plain.ReqBytes)
+	// The record describes the client's request, not the proxy's addition.
+	if inj.ReqBytes != plain.ReqBytes || inj.UploadMS == nil {
+		t.Errorf("injected request size %d, client sent %d; upload %v", inj.ReqBytes, plain.ReqBytes, inj.UploadMS)
 	}
 	off := got["off"]
 	if off.UsageSource != UsageNone || off.CompletionTokens != nil {
@@ -358,7 +360,7 @@ func TestEndToEndReplay(t *testing.T) {
 	defer up.Close()
 	hs := newHarness(t, []config.Route{{Name: "ollama", Prefix: "/", Upstream: up.URL, Dialect: config.DialectOpenAI}}, config.Default().Capture)
 
-	for _, rec := range recs {
+	for i, rec := range recs {
 		body, _ := os.ReadFile(filepath.Join(dir, rec.Name+".req.json"))
 		req, _ := http.NewRequest(http.MethodPost, hs.url+"/v1/chat/completions", bytes.NewReader(body))
 		req.Header.Set("X-Fixture", rec.Name)
@@ -368,7 +370,7 @@ func TestEndToEndReplay(t *testing.T) {
 		}
 		io.ReadAll(resp.Body)
 		resp.Body.Close()
-		hs.wait(t, 1) // sequential: records arrive in recording order
+		hs.wait(t, i+1) // record i exists before request i+1 is sent: order is kept
 	}
 	records := hs.wait(t, len(recs))
 	for i, rec := range recs {
@@ -432,5 +434,40 @@ func TestEndToEndReplay(t *testing.T) {
 	}
 	if hs.h.BudgetUsed() != 0 {
 		t.Errorf("budget leaked")
+	}
+}
+
+// panicky is a dialect that fails on every input.
+type panicky struct{ dialect.Generic }
+
+func (panicky) ParseRequest(dialect.Endpoint, []byte, bool) dialect.Request { panic("parser bug") }
+func (panicky) ParseResponse(dialect.Endpoint, dialect.ResponseCapture) dialect.Response {
+	panic("parser bug")
+}
+
+// A parser panic drops the record, releases the capture memory and unblocks
+// the response side; the process and the traffic are unaffected.
+func TestParserPanicIsContained(t *testing.T) {
+	Dialects["panicky"] = panicky{}
+	defer delete(Dialects, "panicky")
+	up := replay(t, false)
+	defer up.Close()
+	hs := newHarness(t, []config.Route{{Name: "p", Prefix: "/", Upstream: up.URL, Dialect: "panicky"}}, config.Default().Capture)
+	for range 3 {
+		if len(send(t, hs.url, "chat_stream")) == 0 {
+			t.Fatal("traffic affected by a stage-2 panic")
+		}
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for hs.h.BudgetUsed() != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if hs.h.BudgetUsed() != 0 {
+		t.Errorf("capture budget leaked after panics: %d", hs.h.BudgetUsed())
+	}
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+	if len(hs.records) != 0 {
+		t.Errorf("records emitted from panicking parser: %d", len(hs.records))
 	}
 }

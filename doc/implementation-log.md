@@ -215,3 +215,73 @@ as it becomes ready.
   (`benchmarks.md`).
 - Observed (in `benchmarks.md`): grid TTFTs after the first cell per row are
   warm (Ollama prefix cache); the parallel batch was served sequentially.
+
+### 2026-10-02 — review pass, items 1–6
+
+Code review of all packages; findings ranked by impact. Fixed:
+
+1. A panic in stage 2 no longer kills the process. `pipeline.Queue` recovers
+   per item and counts (`Panics`); `shape.Assembler.Handle` recovers, releases
+   the capture buffers, unblocks a waiting response side and logs the request
+   ID only. Test: a dialect that panics on every input — traffic unaffected,
+   budget back to 0, no records.
+2. Configuration refuses options whose feature does not exist yet
+   (client authentication, mTLS CA, metrics TLS / bearer / pprof, prefix
+   estimator, strict mode) instead of accepting them silently. The strict-mode
+   rules stay and are tested; strict mode itself is refused until M3.
+3. `jsonscan` limits nesting to 256 (`ErrTooDeep`); a hostile 1 MiB body of
+   `[` no longer drives unbounded recursion.
+4. `TestEndToEndReplay` waits for record i before sending request i+1, so
+   record order cannot drift with several workers.
+5. With `stream_usage: inject`, `req_bytes` excludes the inserted bytes and
+   `upload_ms` ends when the client's body was read (it was ~0 before).
+6. `capture.NewRing` / `NewBuffer` guard non-positive sizes.
+
+Still open from the review (items 7–10): single source for duplicated
+constants, `ServeHTTP` decomposition, naming (`Pending.Capture`), listener
+collision by port. Also open: `PR_SET_DUMPABLE` / `RLIMIT_CORE` from
+`privacy.md` are not set yet (M3).
+
+### 2026-10-02 — review pass, items 7–10
+
+7. One source per constant set: dialect-level usage sources live in
+   `dialect` and `shape` aliases them, adding only `injected` / `estimated`;
+   `dialect.OutputExact` / `OutputDerived` replace the string literals.
+8. `proxy.Handler.ServeHTTP` split into `newPending`, `admit` / `leave` /
+   `reject`, `prepareRequest` and `finish`; behaviour unchanged.
+9. `Pending.Capture` renamed to `Captured`; `injectVisitor` fields grouped by
+   meaning.
+10. `metrics.listen` and `listen.addr` are compared by port, with an empty or
+    wildcard host matching any host (`:8080` and `0.0.0.0:8080` now collide).
+
+No behaviour change beyond item 10; all tests unchanged and passing.
+
+### 2026-10-02 — fix: responses cut under load (request body EOF race)
+
+- Symptom: under parallel load (`go test -race -count=4 ./...`), about one run
+  in four to six had a test whose upstream stream was cut after a few
+  milliseconds (`TestServeShutdownLetsStreamsFinish`,
+  `TestEndToEndDeepSeekFixtures`), recorded as `upstream_error` with no usage.
+- Diagnosis, from an instrumented transport and the Go sources: the upstream
+  response read failed with "use of closed network connection" while the
+  request context was alive; just before it, the transport's read of the
+  request body failed with "http: invalid Read on closed Body". net/http
+  drains and closes an unread request body when the handler writes response
+  headers (`server.go`, the `fullDuplex` check). If the transport has sent all
+  bytes but not yet made its final read to see EOF, that read hits the closed
+  body, the transport treats it as a write error and drops the upstream
+  connection.
+- A production defect, not a test artefact: any streaming response could be
+  cut this way under load.
+- Tried `ResponseController.EnableFullDuplex`: it stops the drain but lets the
+  transport read the body after the handler returned, which made net/http
+  panic with "invalid concurrent Body.Read call" in another test. Reverted.
+- Fix: the body wrapper knows `Content-Length`; it returns EOF together with
+  the last bytes and never reads the server's body again after that. Test:
+  a body that fails every read after close is never read past its length.
+- Result: 0 failures in 8 × 4 full parallel runs (was about 1 in 4–6).
+- Remaining exposure: request bodies without `Content-Length` (chunked), and
+  an upstream that answers before reading the whole body. LLM API clients send
+  a length and LLM APIs read the body first; noted for M5 load tests.
+- Also fixed: `TestStalledPipelineDoesNotBlockTraffic` read the drop counter
+  before the last handler had emitted; it now waits for the exact count.

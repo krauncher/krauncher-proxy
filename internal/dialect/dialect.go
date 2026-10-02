@@ -61,7 +61,14 @@ func (r ResponseCapture) Complete() ([]byte, bool) {
 	return append(append([]byte(nil), r.Body...), r.Tail...), true
 }
 
-// Usage sources, as in the record.
+// How OutputTextBytes was obtained.
+const (
+	OutputExact   = "exact"   // every event (or the whole body) was parsed
+	OutputDerived = "derived" // computed across a gap, see doc/data-model.md
+)
+
+// Usage sources a dialect can report; the record adds "injected" and
+// "estimated" (package shape).
 const (
 	UsageResponse    = "response"
 	UsageStreamFinal = "stream_final"
@@ -83,7 +90,7 @@ type Response struct {
 	// FirstContentEnd is the offset just after the first event carrying
 	// generated output (streaming), or -1.
 	FirstContentEnd int64
-	// OutputTextBytes and how they were obtained ("exact" or "derived").
+	// OutputTextBytes and how they were obtained (OutputExact, OutputDerived).
 	OutputTextBytes       *int
 	OutputTextBytesSource string
 	// Overhead is the number of SSE events that carry no generated tokens

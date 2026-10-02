@@ -157,13 +157,48 @@ listen:
 client_auth:
   mode: mtls
 `
-	if _, err := Parse([]byte(ok), noEnv); err != nil {
-		t.Fatalf("valid strict config rejected: %v", err)
+	// The strict rules are complete for this config, but strict mode itself
+	// is refused until its features exist.
+	_, err = Parse([]byte(ok), noEnv)
+	if err == nil || strings.Contains(err.Error(), "requires") || !strings.Contains(err.Error(), "not implemented") {
+		t.Fatalf("want only not-implemented errors, got %v", err)
 	}
 
 	inject := strings.Replace(ok, "dialect: openai", "dialect: openai\n    stream_usage: inject", 1)
 	if _, err := Parse([]byte(inject), noEnv); err == nil || !strings.Contains(err.Error(), "stream_usage inject") {
 		t.Fatalf("strict mode accepted inject: %v", err)
+	}
+}
+
+func TestUnimplementedOptionsRefused(t *testing.T) {
+	cases := map[string]string{
+		"client_auth:\n  mode: header\n  tokens_file: t\n": "client_auth.mode",
+		"metrics:\n  pprof: true\n":                        "metrics.pprof",
+		"metrics:\n  bearer_token_file: b\n":               "metrics.bearer_token_file",
+		"metrics:\n  tls: {cert_file: c, key_file: k}\n":   "metrics.tls",
+		"prefix:\n  enabled: true\n":                       "prefix.enabled",
+	}
+	for extra, key := range cases {
+		_, err := Parse([]byte(minimal+extra), noEnv)
+		if err == nil || !strings.Contains(err.Error(), key+": not implemented") {
+			t.Errorf("%q: want %s refused, got %v", extra, key, err)
+		}
+	}
+}
+
+func TestSameListener(t *testing.T) {
+	cases := []struct {
+		a, b string
+		same bool
+	}{
+		{":8080", ":8080", true}, {":8080", "0.0.0.0:8080", true}, {"127.0.0.1:8080", ":8080", true},
+		{"127.0.0.1:8080", "127.0.0.1:8080", true}, {"LOCALHOST:1", "localhost:1", true},
+		{"127.0.0.1:8080", "127.0.0.2:8080", false}, {":8080", ":9090", false},
+	}
+	for _, c := range cases {
+		if got := sameListener(c.a, c.b); got != c.same {
+			t.Errorf("sameListener(%q, %q) = %v", c.a, c.b, got)
+		}
 	}
 }
 

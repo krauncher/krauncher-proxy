@@ -8,6 +8,13 @@ exist only for `-config`, `-version`, `-check` (validate config and exit) and
 Invalid configuration fails at startup with a message naming the key. There is
 no hot reload; restart to apply changes.
 
+Options whose feature is not implemented yet are refused at startup rather than
+accepted silently, so a configuration never promises protection the proxy does
+not give. Currently refused: `client_auth.mode` other than `off`,
+`listen.tls.client_ca_file`, `metrics.tls`, `metrics.bearer_token_file`,
+`metrics.pprof`, `prefix.enabled`, `security.strict`. The metrics listener is
+not started yet either (M3).
+
 ## Full example with defaults
 
 ```yaml
