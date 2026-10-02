@@ -1,0 +1,1 @@
+{"max_tokens":40,"messages":[{"content":"You are a terse assistant.","role":"system"},{"content":"Name three colors.","role":"user"}],"model":"qwen3.5:9b-q8_0","stream":true,"stream_options":{"include_usage":true}}

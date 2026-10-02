@@ -63,7 +63,7 @@ capture:
   response_tail_bytes: 64KiB
   timeline_max_points: 256
   budget_bytes: 2GiB            # global cap on capture memory
-  budget_step: 64KiB            # reservation step when Content-Length is unknown
+  budget_step: 64KiB            # capture memory is reserved in steps of this size
 
 pipeline:
   queue_size: 65536

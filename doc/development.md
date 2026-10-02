@@ -45,7 +45,7 @@
 cmd/llm-shape-proxy/      main: config load, wiring, signals, shutdown
 internal/config/          YAML + env parsing, defaults, validation
 internal/proxy/           stage 1: handler, route match, transport, tee, timeline
-internal/capture/         capture buffers, head/tail ring, capture budget
+internal/capture/         capture buffers, head/tail ring, capture budget, Pending
 internal/pipeline/        event queue, worker pool, record queue
 internal/dialect/         Dialect interface, registry
 internal/dialect/openai/
@@ -59,8 +59,10 @@ internal/metrics/         Prometheus collectors, label cache, self metrics, HTTP
 dashboards/               Grafana dashboard JSON
 deploy/                   compose stack, Prometheus config, Grafana provisioning
 internal/fakeupstream/    simulated OpenAI-compatible API (handler, used by tests)
-tools/fakeupstream/       the same as a standalone binary for demos and load
+tools/fakeupstream/       the same as a standalone binary for demos and load;
+                          -replay <dir> -speed <x> replays recordings with their timing
 tools/loadgen/            load generator
+tools/capture/            records fixtures from a real API (key from the environment)
 testdata/                 dialect fixtures (content replaced by placeholders)
 doc/                      this documentation
 ```
@@ -95,8 +97,18 @@ downward only: `proxy` → `capture`, `pipeline`; `pipeline` → `shape`,
 | Property | Forwarded body equals upstream body for random sizes and chunkings, capture on and off |
 | Load | `tools/loadgen` scenarios from `performance.md` |
 
-Fixtures: real responses captured from each supported API with all text
-replaced by placeholders of the same length class. Never commit real content.
+Fixtures: real responses captured from each supported API with
+`tools/capture`, which replaces generated text, ids and tool arguments with
+`x` of the same escaped length, so sizes and envelopes stay exact. Never
+commit real content. Current sets: `testdata/openai/deepseek/`,
+`testdata/openai/ollama-qwen35/` (format coverage, used by the dialect tests).
+
+Replay sets: `testdata/replay/<provider>/`, recorded with
+`tools/capture -suite shapes`. Each response has a `.timing.json` (headers time
+and arrival time of every body piece), so `fakeupstream -replay` reproduces a
+real model's TTFT and decode pace without the model: for demos, dashboards and
+load tests. Current set: `ollama-qwen35` (prompt × output grid, long answer,
+tool calls, a parallel batch).
 
 ## Milestones
 

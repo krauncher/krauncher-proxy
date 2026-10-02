@@ -133,18 +133,27 @@ whole answer, so it says nothing about first-token time.
 
 ### Output text bytes in streams
 
-The data plane keeps only the head and tail of a stream, so exact output text
-size is not available. It is derived:
+When the whole stream fits head + tail, every event is parsed and the value
+is exact. Otherwise the data plane kept only the head and tail, and the value
+is derived:
 
 `output_text_bytes ≈ resp_bytes − sse_events × envelope_bytes − fixed_bytes`
 
 where `envelope_bytes` is the mean per-event overhead (SSE framing + JSON
 envelope − decoded text) measured on the complete content events in the head
-buffer of the same response, and `fixed_bytes` covers the non-content events
-seen in head and tail. JSON escaping of non-ASCII text makes this an
-overestimate for such text; the error is measured on fixtures and recorded in
-`doc/benchmarks.md`. Token counts are never derived from this when usage is
-reported.
+and tail of the same response, and `fixed_bytes` covers the non-content events
+seen there. Limits:
+
+- reasoning text in the gap cannot be told apart from answer text, so a
+  derived value includes it;
+- the error is the envelope variance times the number of events in the gap.
+  Where the envelope is large relative to the text per event (DeepSeek: about
+  300 bytes around a few bytes of text) a derived value is rough; prefer exact
+  values (short responses) when computing bytes per token;
+- JSON escaping of non-ASCII text makes it an overestimate for such text.
+
+Measured errors are in `benchmarks.md`. Token counts are never derived from
+this when usage is reported.
 
 ### Sanitization of strings from clients and upstreams
 

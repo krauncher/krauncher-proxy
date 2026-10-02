@@ -1,0 +1,1 @@
+{"max_tokens":64,"messages":[{"content":"Name one prime number.","role":"user"}],"model":"qwen3.5:9b-q8_0","reasoning_effort":"none"}

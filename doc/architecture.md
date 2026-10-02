@@ -177,16 +177,16 @@ content), and continues.
 ## Global capture budget
 
 Per-request caps bound one request; the global budget bounds the process.
-`capture.budget_bytes` is a weighted semaphore, used only with non-blocking
-`TryAcquire`. Memory is reserved for what is actually captured, not for the cap:
+`capture.budget_bytes` is a counter acquired only with a non-blocking
+compare-and-swap. Memory is reserved for what is actually captured, not for the
+cap:
 
-- **Request**: if `Content-Length` is known, reserve `min(Content-Length,
-  request_max_bytes)` on arrival. If not (chunked), reserve in steps of
-  `capture.budget_step` (default 64 KiB) as bytes arrive. A failed reservation
-  stops capturing at that point (`capture: truncated`, or `skipped` if nothing
-  was reserved); forwarding continues.
-- **Response**: on headers, reserve head + tail for streaming responses; for
-  non-streaming, `min(Content-Length, response_max_bytes)` or stepwise as above.
+- **Request and response head/body**: reserved in steps of
+  `capture.budget_step` (default 64 KiB) as bytes arrive, up to the cap. A
+  failed reservation stops that buffer for good, so what it holds is always one
+  contiguous prefix (`capture: truncated`); forwarding continues.
+- **Response tail**: reserved in one piece (`response_tail_bytes`) the first
+  time bytes overflow the head; if that fails, no tail is kept.
 - **Release**: request reservation when the `RequestEvent` is parsed (or
   dropped), response reservation when the `ResponseEvent` is processed.
 

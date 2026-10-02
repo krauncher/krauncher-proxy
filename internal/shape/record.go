@@ -1,21 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package shape defines the exported per-request shape record and the event
-// the data plane hands to the pipeline. See doc/data-model.md.
+// Package shape is stage 2: it turns captured requests into exported shape
+// records. See doc/data-model.md.
 package shape
 
 import (
 	"math"
 	"time"
+
+	"github.com/krauncher/krauncher-proxy/internal/capture"
 )
 
 // Outcome values.
 const (
-	OutcomeOK              = "ok"
-	OutcomeClientCancelled = "client_cancelled"
-	OutcomeUpstreamError   = "upstream_error"
-	OutcomeProxyError      = "proxy_error"
-	OutcomeUnauthorized    = "unauthorized"
+	OutcomeOK              = capture.OutcomeOK
+	OutcomeClientCancelled = capture.OutcomeClientCancelled
+	OutcomeUpstreamError   = capture.OutcomeUpstreamError
+	OutcomeProxyError      = capture.OutcomeProxyError
+	OutcomeUnauthorized    = capture.OutcomeUnauthorized
 )
 
 // Capture values.
@@ -33,33 +35,6 @@ const (
 	UsageEstimated   = "estimated"
 	UsageNone        = "none"
 )
-
-// Endpoint values.
-const EndpointOther = "other"
-
-// Event is what the data plane knows about one request when it ends. Times
-// carry Go's monotonic reading, so differences are immune to clock steps.
-// A zero time means "did not happen".
-type Event struct {
-	ID        string
-	Route     string
-	Dialect   string
-	Precision string
-	Engine    string
-	Client    string
-
-	T0      time.Time // arrival
-	ReqEnd  time.Time // request body fully read by the upstream transport
-	Headers time.Time // upstream response headers received
-	End     time.Time // last byte written to the client, or abort
-
-	InflightRoute  int64
-	InflightGlobal int64
-	ReqBytes       int64
-	RespBytes      int64
-	Status         int
-	Outcome        string
-}
 
 // Record is one exported line. Field order and names follow
 // doc/data-model.md; nil pointers encode as null ("not known").
@@ -125,34 +100,6 @@ type Record struct {
 
 // Version of the record format, written as "v".
 const Version = 1
-
-// Build turns an event into a record with everything the data plane alone can
-// tell; body-derived fields stay null until a dialect parser fills them.
-func Build(e Event, instance string) Record {
-	return Record{
-		V:                          Version,
-		ID:                         e.ID,
-		Instance:                   instance,
-		Route:                      e.Route,
-		Client:                     optional(e.Client),
-		Dialect:                    e.Dialect,
-		Precision:                  optional(e.Precision),
-		Engine:                     optional(e.Engine),
-		Endpoint:                   EndpointOther,
-		Status:                     e.Status,
-		Outcome:                    e.Outcome,
-		ReqBytes:                   e.ReqBytes,
-		RespBytes:                  e.RespBytes,
-		ConcurrencyAtArrival:       e.InflightRoute,
-		ConcurrencyGlobalAtArrival: e.InflightGlobal,
-		UsageSource:                UsageNone,
-		UploadMS:                   since(e.T0, e.ReqEnd),
-		HeadersMS:                  since(e.T0, e.Headers),
-		LatencyMS:                  ms(e.End.Sub(e.T0)),
-		Capture:                    CaptureSkipped,
-		Time:                       e.T0,
-	}
-}
 
 func optional(s string) *string {
 	if s == "" {

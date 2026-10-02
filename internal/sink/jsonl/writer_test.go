@@ -39,12 +39,11 @@ func (c *fakeClock) now() time.Time {
 }
 
 func record(id string) shape.Record {
-	r := shape.Build(shape.Event{
-		ID: id, Route: "main", Dialect: "openai",
-		T0:  time.Date(2026, 1, 15, 10, 0, 2, 364_500_000, time.UTC),
-		End: time.Date(2026, 1, 15, 10, 0, 3, 0, time.UTC), Status: 200, Outcome: shape.OutcomeOK,
-	}, "inst")
-	return r
+	return shape.Record{
+		V: shape.Version, ID: id, Instance: "inst", Route: "main", Dialect: "openai", Endpoint: "other",
+		Status: 200, Outcome: shape.OutcomeOK, UsageSource: shape.UsageNone, LatencyMS: 635.5,
+		Capture: shape.CaptureSkipped, Time: time.Date(2026, 1, 15, 10, 0, 2, 364_500_000, time.UTC),
+	}
 }
 
 // readAll returns every line of every file, decompressing .gz.

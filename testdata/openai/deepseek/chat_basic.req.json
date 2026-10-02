@@ -1,0 +1,1 @@
+{"max_tokens":40,"messages":[{"content":"You are a terse assistant.","role":"system"},{"content":"Name one prime number.","role":"user"}],"model":"deepseek-chat"}

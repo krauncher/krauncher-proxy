@@ -1,0 +1,1 @@
+{"max_tokens":60,"messages":[{"content":"What is the weather in Paris?","role":"user"}],"model":"deepseek-chat","stream":true,"stream_options":{"include_usage":true},"tools":[{"function":{"description":"Current weather for a city","name":"get_weather","parameters":{"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"}},"type":"function"}]}

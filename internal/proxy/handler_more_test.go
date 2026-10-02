@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krauncher/krauncher-proxy/internal/capture"
 	"github.com/krauncher/krauncher-proxy/internal/config"
 	"github.com/krauncher/krauncher-proxy/internal/fakeupstream"
 	"github.com/krauncher/krauncher-proxy/internal/pipeline"
-	"github.com/krauncher/krauncher-proxy/internal/shape"
 )
 
 func TestConcurrencyAtArrival(t *testing.T) {
@@ -72,8 +72,9 @@ func TestStalledPipelineDoesNotBlockTraffic(t *testing.T) {
 	defer up.Close()
 	stall := make(chan struct{})
 	defer close(stall)
-	q := pipeline.New(1, 1, func(shape.Event) { <-stall })
-	url, _ := startProxyWith(t, oneRoute(up.URL), config.Limits{}, NewTransport(config.Default().Upstream), q.Submit, slog.Default())
+	q := pipeline.New(1, 1, func(*capture.Pending) { <-stall })
+	emit := func(p *capture.Pending, response bool) bool { return q.Submit(p) }
+	url, _ := startProxyWith(t, oneRoute(up.URL), config.Limits{}, NewTransport(config.Default().Upstream), emit, slog.Default())
 
 	const n = 20
 	start := time.Now()
@@ -128,7 +129,7 @@ func TestTLSUpstream(t *testing.T) {
 		if resp.StatusCode != http.StatusBadGateway {
 			t.Fatalf("status %d, want 502", resp.StatusCode)
 		}
-		if ev := rec.wait(t, 1)[0]; ev.Outcome != shape.OutcomeUpstreamError {
+		if ev := rec.wait(t, 1)[0]; ev.Outcome != capture.OutcomeUpstreamError {
 			t.Errorf("outcome %q", ev.Outcome)
 		}
 	})
@@ -183,7 +184,7 @@ func TestClientCancelBeforeHeaders(t *testing.T) {
 		t.Fatal("upstream request not cancelled")
 	}
 	ev := rec.wait(t, 1)[0]
-	if ev.Outcome != shape.OutcomeClientCancelled || ev.Status != 0 || !ev.Headers.IsZero() {
+	if ev.Outcome != capture.OutcomeClientCancelled || ev.Status != 0 || !ev.Headers.IsZero() {
 		t.Errorf("event %+v, want client_cancelled with no status and no headers", ev)
 	}
 }

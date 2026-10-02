@@ -20,6 +20,7 @@ import (
 	"syscall"
 
 	"github.com/krauncher/krauncher-proxy/internal/auth"
+	"github.com/krauncher/krauncher-proxy/internal/capture"
 	"github.com/krauncher/krauncher-proxy/internal/config"
 	"github.com/krauncher/krauncher-proxy/internal/pipeline"
 	"github.com/krauncher/krauncher-proxy/internal/proxy"
@@ -104,12 +105,18 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	if workers == 0 {
 		workers = runtime.GOMAXPROCS(0)
 	}
-	events := pipeline.New(cfg.Pipeline.QueueSize, workers, func(e shape.Event) {
-		r := shape.Build(e, cfg.Instance.Name)
-		if sink != nil {
-			sink.Submit(r)
-		}
-	})
+	asm := &shape.Assembler{
+		Instance:    cfg.Instance.Name,
+		Estimate:    cfg.Estimate,
+		RequestWait: cfg.Pipeline.RequestWait,
+		MaxBody:     int(cfg.Capture.ResponseMaxBytes),
+		Out: func(r shape.Record) {
+			if sink != nil {
+				sink.Submit(r)
+			}
+		},
+	}
+	events := pipeline.New(cfg.Pipeline.QueueSize, workers, asm.Handle)
 	// Runs on every exit path, after the server has stopped: drain the
 	// events, then flush the sink.
 	defer func() {
@@ -121,7 +128,16 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		}
 		log.Info("stopped", "events_dropped", events.Dropped())
 	}()
-	h, err := proxy.New(cfg.Routes, cfg.Limits, proxy.NewTransport(cfg.Upstream), events.Submit, log)
+	h, err := proxy.New(proxy.Options{
+		Routes:    cfg.Routes,
+		Limits:    cfg.Limits,
+		Capture:   cfg.Capture,
+		Transport: proxy.NewTransport(cfg.Upstream),
+		Emit: func(p *capture.Pending, response bool) bool {
+			return events.Submit(shape.Job{P: p, Response: response})
+		},
+		Log: log,
+	})
 	if err != nil {
 		return err
 	}

@@ -1,0 +1,8 @@
+data: {"id":"xxxxxxxxxxxx","object":"chat.completion.chunk","created":1790937626,"model":"qwen3.5:9b-q8_0","system_fingerprint":"xxxxxxxxx","choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"id":"xxxxxxxxxxxxx","index":0,"type":"function","function":{"name":"get_weather","arguments":"xxxxxxxxxxxxxxxxxxxxx"}}]},"finish_reason":null}]}
+
+data: {"id":"xxxxxxxxxxxx","object":"chat.completion.chunk","created":1790937626,"model":"qwen3.5:9b-q8_0","system_fingerprint":"xxxxxxxxx","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: {"id":"xxxxxxxxxxxx","object":"chat.completion.chunk","created":1790937626,"model":"qwen3.5:9b-q8_0","system_fingerprint":"xxxxxxxxx","choices":[],"usage":{"prompt_tokens":281,"completion_tokens":26,"total_tokens":307}}
+
+data: [DONE]
+

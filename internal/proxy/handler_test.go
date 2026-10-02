@@ -20,21 +20,27 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krauncher/krauncher-proxy/internal/capture"
 	"github.com/krauncher/krauncher-proxy/internal/config"
 	"github.com/krauncher/krauncher-proxy/internal/fakeupstream"
-	"github.com/krauncher/krauncher-proxy/internal/shape"
 )
 
 // recorder collects emitted events.
 type recorder struct {
 	mu     sync.Mutex
-	events []shape.Event
+	events []*capture.Pending
 	added  chan struct{}
 }
 
 func newRecorder() *recorder { return &recorder{added: make(chan struct{}, 1000)} }
 
-func (r *recorder) emit(e shape.Event) bool {
+// emit records response sides; request sides are released unparsed.
+func (r *recorder) emit(e *capture.Pending, response bool) bool {
+	if !response {
+		e.Req.Release()
+		e.ResolveRequest(nil)
+		return true
+	}
 	r.mu.Lock()
 	r.events = append(r.events, e)
 	r.mu.Unlock()
@@ -43,12 +49,12 @@ func (r *recorder) emit(e shape.Event) bool {
 }
 
 // wait returns the first n events, failing after a timeout.
-func (r *recorder) wait(t *testing.T, n int) []shape.Event {
+func (r *recorder) wait(t *testing.T, n int) []*capture.Pending {
 	t.Helper()
 	for {
 		r.mu.Lock()
 		if len(r.events) >= n {
-			ev := append([]shape.Event(nil), r.events...)
+			ev := append([]*capture.Pending(nil), r.events...)
 			r.mu.Unlock()
 			return ev
 		}
@@ -75,7 +81,7 @@ func startProxyWith(t *testing.T, routes []config.Route, limits config.Limits, t
 			routes[i].Dialect = config.DialectGeneric
 		}
 	}
-	h, err := New(routes, limits, tr, emit, log)
+	h, err := New(Options{Routes: routes, Limits: limits, Capture: config.Default().Capture, Transport: tr, Emit: emit, Log: log})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +179,7 @@ func TestHeadersPassThrough(t *testing.T) {
 	if resp.StatusCode != 201 || resp.Header.Get("X-Resp") != "r" {
 		t.Errorf("response status %d header %q", resp.StatusCode, resp.Header.Get("X-Resp"))
 	}
-	if ev := rec.wait(t, 1)[0]; ev.Status != 201 || ev.Outcome != shape.OutcomeOK || ev.ReqEnd != ev.T0 {
+	if ev := rec.wait(t, 1)[0]; ev.Status != 201 || ev.Outcome != capture.OutcomeOK || ev.ReqEnd != ev.T0 {
 		t.Errorf("event %+v", ev)
 	}
 }
@@ -237,7 +243,7 @@ func TestClientCancelReachesUpstream(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("upstream request not cancelled")
 	}
-	if ev := rec.wait(t, 1)[0]; ev.Outcome != shape.OutcomeClientCancelled {
+	if ev := rec.wait(t, 1)[0]; ev.Outcome != capture.OutcomeClientCancelled {
 		t.Errorf("outcome %q, want client_cancelled", ev.Outcome)
 	}
 }
@@ -257,7 +263,7 @@ func TestUpstreamUnreachable(t *testing.T) {
 		t.Fatalf("status %d, want 502", resp.StatusCode)
 	}
 	ev := rec.wait(t, 1)[0]
-	if ev.Outcome != shape.OutcomeUpstreamError || ev.Status != 502 || !ev.Headers.IsZero() {
+	if ev.Outcome != capture.OutcomeUpstreamError || ev.Status != 502 || !ev.Headers.IsZero() {
 		t.Errorf("event %+v", ev)
 	}
 }
@@ -278,7 +284,7 @@ func TestUpstreamBreaksMidStream(t *testing.T) {
 	}
 	io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if ev := rec.wait(t, 1)[0]; ev.Outcome != shape.OutcomeUpstreamError || ev.RespBytes == 0 {
+	if ev := rec.wait(t, 1)[0]; ev.Outcome != capture.OutcomeUpstreamError || ev.RespBytes == 0 {
 		t.Errorf("event %+v", ev)
 	}
 }
@@ -362,7 +368,7 @@ func TestMaxInflight(t *testing.T) {
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("second request status %d, want 503", resp.StatusCode)
 	}
-	if ev := rec.wait(t, 1)[0]; ev.Outcome != shape.OutcomeProxyError || ev.Status != 503 {
+	if ev := rec.wait(t, 1)[0]; ev.Outcome != capture.OutcomeProxyError || ev.Status != 503 {
 		t.Errorf("event %+v", ev)
 	}
 	close(release)
@@ -388,13 +394,14 @@ func TestTimingsAgainstFakeUpstream(t *testing.T) {
 	if !strings.HasSuffix(string(body), "data: [DONE]\n\n") {
 		t.Fatalf("stream not complete: %q", body)
 	}
-	r := shape.Build(rec.wait(t, 1)[0], "test")
-	if r.Status != 200 || r.Outcome != shape.OutcomeOK || r.ConcurrencyAtArrival != 1 || r.ConcurrencyGlobalAtArrival != 1 {
-		t.Errorf("record %+v", r)
+	p := rec.wait(t, 1)[0]
+	if p.Status != 200 || p.Outcome != capture.OutcomeOK || p.InflightRoute != 1 || p.InflightGlobal != 1 {
+		t.Errorf("event %+v", p)
 	}
 	// Order, plus one bound the proxy itself must see: headers not before the
 	// upstream's 50 ms header delay. No absolute upper bounds: CI is slow.
-	if r.UploadMS == nil || r.HeadersMS == nil || *r.UploadMS > *r.HeadersMS || *r.HeadersMS < 50 || r.LatencyMS < *r.HeadersMS {
-		t.Errorf("timings upload %v headers %v latency %v", *r.UploadMS, *r.HeadersMS, r.LatencyMS)
+	if p.ReqEnd.IsZero() || p.Headers.IsZero() || p.ReqEnd.After(p.Headers) ||
+		p.Headers.Sub(p.T0) < 50*time.Millisecond || p.End.Before(p.Headers) {
+		t.Errorf("timings t0 %v req %v headers %v end %v", p.T0, p.ReqEnd, p.Headers, p.End)
 	}
 }

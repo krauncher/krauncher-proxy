@@ -1,0 +1,1 @@
+{"error":{"message":"Failed to deserialize the JSON body into the target type: messages: invalid type: string \"not a list\", expected a sequence at line 1 column 24 (request_id: 7e63e901-f3f5-4a57-bfd5-488f4378c298)","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}

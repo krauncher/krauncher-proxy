@@ -1,0 +1,1 @@
+{"max_tokens":6000,"messages":[{"content":"Write a very long, detailed story about a river journey, with many chapters.","role":"user"}],"model":"qwen3.5:9b-q8_0","reasoning_effort":"none","stream":true,"stream_options":{"include_usage":true}}

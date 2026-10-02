@@ -59,10 +59,22 @@ inference servers, gateways).
 `data: [DONE]`.
 - First content event: first chunk whose `choices[*].delta` has non-empty
   `content`, `reasoning_content` or `tool_calls`.
-- Usage: present only in a final chunk when the client asked for it
-  (`stream_options.include_usage`). Most clients don't, so this is the common
-  case, not the exception. What happens without it depends on the route option
-  `stream_usage` (see Token usage in streams below).
+- Usage: by the OpenAI specification present only in a final chunk when the
+  client asked for it (`stream_options.include_usage`), which most clients
+  don't. Servers differ: DeepSeek sends usage in the finish chunk on every
+  stream (verified on fixtures). What happens without usage depends on the
+  route option `stream_usage` (see Token usage in streams below).
+- The `model` in responses may differ from the requested one (DeepSeek answers
+  `deepseek-chat` requests as `deepseek-flash`). The record keeps the
+  requested name; the response name is used only when the request had none.
+- Cached input: `usage.prompt_tokens_details.cached_tokens`; DeepSeek also
+  sends `prompt_cache_hit_tokens` with the same value, used as a fallback.
+- Ollama (verified on fixtures, 0.33.2): usage in a stream only with
+  `include_usage`, as a separate final chunk with empty `choices`; without it
+  the record falls back to estimation, or use `stream_usage: inject`. Reasoning
+  text comes as `reasoning` (DeepSeek: `reasoning_content`); both are parsed.
+  No cached-token field. Unknown model → 404 `not_found_error`. No API key
+  check.
 - `responses` streaming uses typed events; first content = first
   `response.output_text.delta` (or other output delta); usage in
   `response.completed`.
@@ -131,13 +143,19 @@ apart (`outputs.md`).
   token; servers that batch several tokens per event make this an
   underestimate. Non-streaming responses without usage: output text bytes ÷
   `estimate.bytes_per_token`.
-- **Input tokens** ≈ `text_bytes ÷ estimate.bytes_per_token` (default 4.0),
-  plus a fixed per-message overhead (`estimate.tokens_per_message`, default 4).
+- **Input tokens** ≈ `(text_bytes + tool definition bytes) ÷
+  estimate.bytes_per_token` (default 4.0), plus a fixed per-message overhead
+  (`estimate.tokens_per_message`, default 4). Providers add hidden template
+  tokens (tool-calling and reasoning prompts in particular) that no byte count
+  can see; measured errors are in `benchmarks.md`.
   Non-text inputs (`image_inputs`) are not estimated; records with
   `image_inputs > 0` and no reported usage get `prompt_tokens: null`.
+- Tool-call streams emit several tokens per event, and providers count
+  formatting tokens for the call, so the output estimate is a known
+  underestimate there.
 - The estimate is for distributions, not billing. Its error is measured in the
   test suite against fixtures that carry real usage, and recorded in
-  `doc/benchmarks.md` per dialect.
+  `benchmarks.md` per dialect.
 
 ## Parsing truncated request bodies
 

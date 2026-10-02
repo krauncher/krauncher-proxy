@@ -10,7 +10,7 @@ Milestone definitions are in [development.md](development.md).
 |---|---|---|
 | 0 | Skeleton: module, CI, config, `cmd/llm-shape-proxy` | done |
 | M1 | Pass-through proxy, timings, generic records, JSONL sink, fakeupstream | done |
-| M2 | Capture, pipeline events, jsonscan, SSE, `openai` dialect, estimation, `stream_usage` | not started |
+| M2 | Capture, pipeline events, jsonscan, SSE, `openai` dialect, estimation, `stream_usage` | done |
 | M3 | Prometheus metrics, shape cell, dashboard, compose, cheap security measures | not started |
 | M2b | `anthropic` dialect | not started |
 | M4 | Prefix repetition estimator | not started |
@@ -126,3 +126,92 @@ as it becomes ready.
 - Deferred to M2: randomized chunking property test, JSONL age-based rotation
   and retention, write-error path, trailers / 1xx / upgrades, goroutine leak
   checks, TLS listener.
+
+### 2026-10-02 — M2: capture and the `openai` dialect
+
+- Fixtures: `tools/capture` recorded 12 DeepSeek scenarios into
+  `testdata/openai/deepseek/` (plain, length-limited, streams with and without
+  `include_usage`, tool calls plain and streamed, cache miss/hit pair, three
+  error types, a reasoning stream). Generated text, ids and tool arguments are
+  replaced by `x` of the same escaped length; the key came from `.env`.
+- Verified on fixtures: DeepSeek sends usage in the finish chunk of every
+  stream, also without `include_usage`; it reports cached input both as
+  `prompt_tokens_details.cached_tokens` and `prompt_cache_hit_tokens`; it
+  answers `deepseek-chat` as `deepseek-flash`; stream overhead is 3 events
+  (role chunk, finish chunk, `[DONE]`). Documented in `protocols.md`.
+- `internal/jsonscan`: one-pass, allocation-free path scanner for possibly
+  truncated JSON. Truncation at every byte of every fixture tested; fuzzed for
+  2 minutes (21 M inputs) after fixing three findings (invalid UTF-8 length,
+  raw control characters, top-level number at end of input).
+- `internal/sse`: event scanner (tail may start mid-event) and the data-plane
+  event counter; counter agrees with the scanner on all fixtures at any write
+  boundaries.
+- `internal/capture`: memory budget (non-blocking CAS), step-reserved buffers
+  that stay contiguous, tail ring, timeline, and `Pending` with the
+  request-side handoff. Replaces the M1 `shape.Event`.
+- Data plane: request capture with exactly-once handoff at EOF or handler end;
+  response head (SSE) or body (JSON) plus tail; SSE counter; timeline;
+  `stream_usage: inject` by byte insertion (only when the body fits the cap).
+  Capture only on non-generic routes.
+- `internal/dialect` + `openai`: endpoints, request fields (messages,
+  multimodal parts, tools, responses `input`/`instructions`, embeddings),
+  response usage / finish / errors, first content event, exact output bytes
+  when the stream is fully captured, derived otherwise; sanitization of model
+  names; closed error-class and finish-reason sets.
+- `internal/shape`: `Assembler` (request/response jobs, gzip bodies,
+  estimation including tool definition bytes, TTFT from the timeline, decode
+  rate, capture state, parse errors).
+- Tests: dialect against independent `encoding/json` ground truth on all
+  fixtures; end-to-end proxy → pipeline → record on replayed fixtures
+  (complete, truncated with a gap, gzip, 401); estimation and injection against
+  fakeupstream; bytes unchanged under random chunking with capture on and off
+  (the M1 deferred property test); capture budget returns to 0 after every
+  scenario. Live run through the proxy to `api.deepseek.com`: records complete.
+- Measured estimation errors in `benchmarks.md`. Known limits: tool-calling and
+  reasoning prompts carry hidden template tokens (input estimate −70…−78%);
+  tool-call streams emit several tokens per event (output estimate −56%);
+  derived output bytes are rough for DeepSeek's large per-event envelopes.
+- Documentation: budget reservation is stepwise for all buffers (simpler than
+  the earlier Content-Length rule, same memory bound); estimation and derived
+  output limits; `benchmarks.md` added.
+- Still open from the M1 review, moved to M3: JSONL age-based rotation and
+  retention tests, write-error path, trailers / 1xx / upgrades, goroutine leak
+  checks, TLS listener test. Anthropic dialect is M2b.
+
+### 2026-10-02 — fixtures from a local open model (Ollama)
+
+- Captured `testdata/openai/ollama-qwen35/` from Ollama 0.33.2 with
+  `qwen3.5:9b-q8_0` on a rented GPU. `err_auth` dropped: Ollama does not check
+  keys, the "error" was a normal answer.
+- Incident: Ollama names reasoning text `reasoning`, which `tools/capture` did
+  not redact, so real model reasoning text was written to the fixture files.
+  Found on inspection before any commit; the redaction list now includes
+  `reasoning`, all fixture files were re-redacted, and a scan for long
+  non-placeholder strings shows only provider error messages and fixed fields.
+- Parser: `message.reasoning` / `delta.reasoning` counted as reasoning output.
+- Findings (in `protocols.md`): usage in streams only with `include_usage`
+  (separate chunk), so estimation is the normal path for local Ollama streams
+  and `stream_usage: inject` is the fix; no cached-token field; 404 for unknown
+  models.
+- Dialect tests now run over both providers with ground truth from
+  `encoding/json`, including per-provider stream overhead (DeepSeek 3 events,
+  Ollama 2–3). Measured errors added to `benchmarks.md`: output estimate −2…−19%,
+  input estimate −23…+24% for text, −78% with tools; derived output bytes
+  −7…−22%.
+
+### 2026-10-02 — replay sets with timing
+
+- `tools/capture`: suites (`basic`, `shapes`), timing per response
+  (`.timing.json`: headers time, arrival of every body piece), parallel batches;
+  redaction now also covers `reasoning`.
+- Recorded `testdata/replay/ollama-qwen35/` (17 responses, 2.8 MB): prompt ×
+  output grid, long answer (4 771 tokens, 1 MB stream), real tool calls plain
+  and streamed, non-thinking plain answer, parallel batch of 4.
+- `fakeupstream`: `LoadRecordings` + `Replay` (by `X-Fixture` or round-robin,
+  timing scaled by a speed factor); binary flags `-replay`, `-speed`.
+- Tests: replay reproduces bytes and pace; end-to-end replay of every recording
+  through the proxy: usage matches, TTFT not before the recorded headers,
+  output bytes exact on short streams and within 1% derived on long ones
+  (`benchmarks.md`).
+- Observed (in `benchmarks.md`): grid TTFTs after the first cell per row are
+  warm (Ollama prefix cache); the parallel batch was served sequentially.

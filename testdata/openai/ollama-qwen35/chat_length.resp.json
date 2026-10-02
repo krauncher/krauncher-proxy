@@ -1,0 +1,1 @@
+{"id":"xxxxxxxxxxxx","object":"chat.completion","created":1790937194,"model":"qwen3.5:9b-q8_0","system_fingerprint":"xxxxxxxxx","choices":[{"index":0,"message":{"role":"assistant","content":"","reasoning":"xxxxxxxxxxxxxxxxxxxxxx"},"finish_reason":"length"}],"usage":{"prompt_tokens":18,"completion_tokens":5,"total_tokens":23}}
