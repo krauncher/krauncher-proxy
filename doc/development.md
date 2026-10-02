@@ -2,7 +2,9 @@
 
 ## Toolchain
 
-- Go 1.24 or newer. Module path `github.com/krauncher/krauncher-proxy`. Binary
+- Go 1.26; `go.mod` pins `toolchain go1.26.8`, and the `go` command fetches it
+  automatically if the installed Go is older. Raise the pin with each Go
+  security release. Module path `github.com/krauncher/krauncher-proxy`. Binary
   `llm-shape-proxy`; metric prefix `llm_shape_`, environment prefix
   `LLM_SHAPE_`. Names describe the function, not the vendor.
 - Dependencies allowed without discussion: `github.com/prometheus/client_golang`,
@@ -23,7 +25,9 @@
   an advisory.
 - Forks are expected and welcome. Nothing in the code may assume a specific
   vendor, endpoint or account.
-- `gofmt`, `go vet`, `staticcheck` clean. Tests run with `-race` in CI.
+- `gofmt`, `go vet`, `staticcheck` clean, `govulncheck` reports nothing. Tests
+  run with `-race`. `make check` runs all of it; tool versions are pinned in
+  the `Makefile`.
 
 ## Build and release
 

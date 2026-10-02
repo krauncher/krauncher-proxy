@@ -8,7 +8,7 @@ Milestone definitions are in [development.md](development.md).
 
 | Stage | Scope | Status |
 |---|---|---|
-| 0 | Skeleton: module, CI, config, `cmd/llm-shape-proxy` | not started |
+| 0 | Skeleton: module, CI, config, `cmd/llm-shape-proxy` | done |
 | M1 | Pass-through proxy, timings, generic records, JSONL sink, fakeupstream | not started |
 | M2 | Capture, pipeline events, jsonscan, SSE, `openai` dialect, estimation, `stream_usage` | not started |
 | M3 | Prometheus metrics, shape cell, dashboard, compose, cheap security measures | not started |
@@ -53,3 +53,22 @@ as it becomes ready.
 - Purpose: statistics integrity, proxy resources, attribution (`client` field).
 - During development the DeepSeek key and the proxy tokens live in `.env`,
   which is not tracked by git. A more secure arrangement comes later.
+
+### 2026-10-02 — stage 0: skeleton
+
+- `go.mod`, `internal/config` (structure, defaults, YAML with unknown-key
+  errors, `LLM_SHAPE_*` overrides, validation naming every key, strict-mode
+  rules), `internal/auth` (token hashing), `cmd/llm-shape-proxy` (`-config`,
+  `-check`, `-version`, `-hash-token`, `slog`, signal handling).
+- `configs/example.yaml` is generated from `configuration.md`; a test keeps it
+  valid and equal to the code defaults.
+- `Makefile` (`build`, `test`, `lint`, `check`) and GitHub Actions CI with a DCO
+  check on pull requests. Commits are signed off from now on.
+- Fixed in `configuration.md`: `listen.read_header_timeout` and
+  `listen.idle_timeout` had been placed under `client_auth`.
+- `govulncheck` found two standard-library vulnerabilities in Go 1.24.4
+  (`net/url`, reachable from config validation). Decision: Go 1.26, toolchain
+  pinned to go1.26.8 in `go.mod`; staticcheck v0.8.1 and govulncheck v1.8.0
+  pinned in the `Makefile`. `make check` is clean.
+- Size parse errors give the line and the value, not the key name: the YAML
+  decoder does not expose the key to custom types. Accepted.

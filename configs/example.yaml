@@ -1,16 +1,4 @@
-# Configuration
-
-One YAML file, path given by `-config`. Every key can be overridden by an
-environment variable `LLM_SHAPE_<SECTION>_<KEY>` (upper case, dots → `_`). Flags
-exist only for `-config`, `-version`, `-check` (validate config and exit) and
-`-hash-token` (read a token from stdin, print its SHA-256 for the tokens file).
-
-Invalid configuration fails at startup with a message naming the key. There is
-no hot reload; restart to apply changes.
-
-## Full example with defaults
-
-```yaml
+# Full configuration with defaults; see doc/configuration.md.
 instance:
   name: ""                      # default: hostname
 
@@ -119,38 +107,3 @@ log:
 
 shutdown:
   grace: 60s
-```
-
-## Rules
-
-- There is no option to disable TLS certificate verification towards
-  upstreams, and none will be added. Private CAs are supported via the system
-  trust store.
-- The configuration file contains no secrets. TLS keys, the client tokens
-  file and the metrics bearer token are referenced by file path. The tokens
-  file holds only hashes.
-- There is no option to store upstream keys in the proxy. They come from the
-  client with each request.
-- `security.strict: true` refuses to start unless: `listen.tls` is set,
-  `metrics.pprof` is false, no route has
-  `stream_usage: inject`, `metrics.listen` is loopback or has TLS, and
-  `client_auth.mode` is not `off` when `listen.addr` is not loopback.
-  Intended for enterprise deployments.
-
-- Sizes accept `B`, `KiB`, `MiB`, `GiB`; durations use Go syntax.
-- Route prefixes must be unique. A path that matches no route gets 404 from
-  the proxy and is counted, not forwarded.
-- `listen.addr` and `metrics.listen` must differ.
-- `precision` and `engine` are free-form labels describing what serves the
-  upstream. The proxy cannot observe them and does not verify them. Allowed
-  characters: `[a-z0-9._-]`, up to 32 characters. Empty means unknown.
-- `metrics.shape_cell` bounds must be positive and strictly increasing.
-- `metrics.models`: when set, only these values appear in the `model` label,
-  everything else is `other`, identically on every instance. When empty, the
-  first `max_models` distinct values seen by each instance are used; this
-  depends on traffic order and differs between instances, so sums across
-  instances may put the same model in `other` on one instance and not on
-  another. Set the allowlist for any multi-instance deployment.
-  JSONL records always carry the sanitized model name, not the label.
-- Logs never contain request or response bodies, headers' values, or query
-  strings. Paths are logged without query strings.
