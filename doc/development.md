@@ -2,7 +2,9 @@
 
 ## Toolchain
 
-- Go 1.24 or newer. Module path `github.com/krauncher/krauncher-proxy`.
+- Go 1.24 or newer. Module path `github.com/krauncher/krauncher-proxy`. Binary
+  `llm-shape-proxy`; metric prefix `llm_shape_`, environment prefix
+  `LLM_SHAPE_`. Names describe the function, not the vendor.
 - Dependencies allowed without discussion: `github.com/prometheus/client_golang`,
   `gopkg.in/yaml.v3`, `golang.org/x/sync` (semaphore). Anything else needs a
   reason in the pull request.
@@ -36,7 +38,7 @@
 ## Repository layout
 
 ```
-cmd/krauncher-proxy/      main: config load, wiring, signals, shutdown
+cmd/llm-shape-proxy/      main: config load, wiring, signals, shutdown
 internal/config/          YAML + env parsing, defaults, validation
 internal/proxy/           stage 1: handler, route match, transport, tee, timeline
 internal/capture/         capture buffers, head/tail ring, capture budget
@@ -109,5 +111,4 @@ replaced by placeholders of the same length class. Never commit real content.
   An optional, operator-configured header carrying a session ID is a
   candidate: the ID is used in process only and exported as a per-process
   sequential number, never raw and never hashed. Needs a privacy review first.
-- Binary name (`krauncher-proxy`) — confirm. Metric prefix `llm_shape_` and environment prefix `LLM_SHAPE_` are vendor-neutral by decision.
 - Whether a container image is published, and where.
