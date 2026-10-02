@@ -26,6 +26,7 @@ tied to any vendor's service. See Project principles in
 | [performance.md](performance.md) | Load targets, memory bounds, benchmarks and load tests |
 | [privacy.md](privacy.md) | What is seen, what is kept, what never leaves the process |
 | [development.md](development.md) | Repository layout, conventions, testing, milestones, open questions |
+| [implementation-log.md](implementation-log.md) | Implementation status and dated log of progress and decisions |
 
 ## Glossary
 

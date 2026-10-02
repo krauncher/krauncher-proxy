@@ -191,8 +191,10 @@ timeline point, and `chunks`. `endpoint: other`.
 
 - HTTP/1.1 and HTTP/2 to the upstream; HTTP/1.1 from clients, and HTTP/2 when
   the listener has TLS. Cleartext HTTP/2 (h2c) is deferred.
-- Hop-by-hop headers removed per RFC 9110; everything else passed as is,
-  including `Authorization` and provider API key headers.
+- Hop-by-hop headers removed per RFC 9110 (this includes
+  `Proxy-Authorization`). The proxy token header (`client_auth.header`) is
+  removed. Everything else passes as is, including `Authorization` and
+  provider API key headers carrying the client's upstream key.
 - `Accept-Encoding` passes through. Compressed response bodies are captured
   compressed; stage 2 decompresses gzip within the capture cap. Other encodings
   (br, zstd) are recorded with `parse_error: unsupported_encoding` until a need

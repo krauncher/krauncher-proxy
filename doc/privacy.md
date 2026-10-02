@@ -12,7 +12,9 @@ content from them. What it guarantees instead:
 
 - it leaves **nothing content-bearing on disk**;
 - content stays in memory **briefly and in few copies**;
-- it holds **no secrets of its own** beyond its TLS key;
+- it holds **no upstream keys**: they arrive with each request and live in
+  memory only for that request; its own secrets are the TLS key and a file of
+  client token hashes;
 - it is **not a channel out**: no outbound connections except to configured
   upstreams;
 - it is **hard to use as a way in**: minimal image, no shell, no root
@@ -30,6 +32,8 @@ Full request and response bytes, all headers including credentials.
 | Response capture buffers | Until the response side is parsed; then zeroed and released |
 | Prefix block hashes (optional) | Salted, in an in-memory LRU, at most `prefix.ttl`; salt rotates with TTL |
 | Headers | Not captured at all |
+| Client's upstream key | Only inside the request being forwarded; never captured, logged or stored |
+| Proxy client token | Hashed on arrival, compared, discarded; only hashes are on disk |
 
 Limit, stated plainly: Go does not allow guaranteed erasure of every copy of
 the data. Capture buffers are zeroed, but internal buffers of `net/http` and

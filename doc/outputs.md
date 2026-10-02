@@ -15,6 +15,7 @@ Served at `http://<metrics.listen>/metrics`. Prefix `llm_shape_`.
 | Label | Values | Cardinality control |
 |---|---|---|
 | `route` | route names | From config, fixed |
+| `client` | authenticated client names | Only if `metrics.client_label: true`; values from the tokens file or `mtls.allowed_names`, others → `other`. Attached to `llm_shape_requests_total` and `llm_shape_cell_total` only |
 | `precision` | route `precision` or `unknown` | From config, fixed per route |
 | `engine` | route `engine` or `unknown` | From config, fixed per route |
 | `model` | model names | `metrics.models` allowlist, rest → `other`; without an allowlist, first `metrics.max_models` per instance (see `configuration.md`) |
@@ -112,6 +113,7 @@ compatibility.
 | `llm_shape_capture_budget_used_bytes` | gauge | |
 | `llm_shape_worker_busy_seconds_total` | counter | Worker saturation |
 | `llm_shape_sink_write_errors_total{sink}` | counter | |
+| `llm_shape_auth_failures_total{reason}` | counter | `missing`, `invalid`, `cert_not_allowed` |
 
 Plus the standard Go and process collectors.
 
@@ -139,7 +141,7 @@ Example line (wrapped for reading):
 
 ```json
 {"v":1,"ts":"2026-01-15T10:00:00.000Z","id":"01J...","instance":"proxy-a",
- "route":"main","dialect":"openai","precision":"bf16","engine":"example-engine",
+ "route":"main","client":"app-a","dialect":"openai","precision":"bf16","engine":"example-engine",
  "endpoint":"chat","model":"example-model",
  "stream":true,"status":200,"outcome":"ok","error_class":null,"finish_reason":"stop",
  "req_bytes":8000,"message_count":4,"has_system":true,"tool_count":0,

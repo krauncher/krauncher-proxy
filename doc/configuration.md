@@ -2,7 +2,8 @@
 
 One YAML file, path given by `-config`. Every key can be overridden by an
 environment variable `LLM_SHAPE_<SECTION>_<KEY>` (upper case, dots → `_`). Flags
-exist only for `-config`, `-version` and `-check` (validate config and exit).
+exist only for `-config`, `-version`, `-check` (validate config and exit) and
+`-hash-token` (read a token from stdin, print its SHA-256 for the tokens file).
 
 Invalid configuration fails at startup with a message naming the key. There is
 no hot reload; restart to apply changes.
@@ -17,7 +18,16 @@ listen:
   addr: ":8080"
   tls:
     cert_file: ""               # PEM; empty = plain HTTP
-    key_file: ""                # PEM, mode 0600; the only secret the proxy holds
+    key_file: ""                # PEM, mode 0600
+    client_ca_file: ""          # PEM; required for client_auth.mode: mtls
+
+client_auth:
+  mode: off                     # off | header | mtls
+  header: X-Proxy-Key           # mode header
+  tokens_file: ""               # mode header; lines "name:sha256hex", mode 0600
+  mtls:
+    name_from: cn               # cn | san_dns
+    allowed_names: []           # empty = any certificate signed by the CA
   read_header_timeout: 10s
   idle_timeout: 120s
   # no read/write timeouts: streams may last minutes
@@ -81,6 +91,7 @@ metrics:
   models: []                    # allowlist of model label values; others → other
   max_models: 50                # used only when models is empty
   native_histograms: false
+  client_label: false           # add client label to requests_total and shape cell
   shape_cell:
     prompt_bounds: [512, 1024, 2048, 4096, 8192, 16384, 32768]   # + inf implied
     output_bounds: [32, 64, 128, 256, 512, 1024, 2048]           # + inf implied
@@ -115,11 +126,15 @@ shutdown:
 - There is no option to disable TLS certificate verification towards
   upstreams, and none will be added. Private CAs are supported via the system
   trust store.
-- The configuration file contains no secrets. TLS keys and the metrics bearer
-  token are referenced by file path.
+- The configuration file contains no secrets. TLS keys, the client tokens
+  file and the metrics bearer token are referenced by file path. The tokens
+  file holds only hashes.
+- There is no option to store upstream keys in the proxy. They come from the
+  client with each request.
 - `security.strict: true` refuses to start unless: `listen.tls` is set,
   `metrics.pprof` is false, no route has
-  `stream_usage: inject`, and `metrics.listen` is loopback or has TLS.
+  `stream_usage: inject`, `metrics.listen` is loopback or has TLS, and
+  `client_auth.mode` is not `off` when `listen.addr` is not loopback.
   Intended for enterprise deployments.
 
 - Sizes accept `B`, `KiB`, `MiB`, `GiB`; durations use Go syntax.

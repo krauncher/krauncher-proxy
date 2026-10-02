@@ -29,7 +29,8 @@ Never serialized, never leaves the process.
 | `sse_events` | int | Event separators written (SSE responses only) |
 | `status` | int | HTTP status sent to client |
 | `content_type` | string | Upstream response content type |
-| `outcome` | enum | `ok`, `client_cancelled`, `upstream_error`, `proxy_error` |
+| `outcome` | enum | `ok`, `client_cancelled`, `upstream_error`, `proxy_error`, `unauthorized` |
+| `client` | string | Authenticated client name, empty if `client_auth.mode: off` |
 | `capture` | enum | `full`, `truncated`, `skipped` |
 
 ## ShapeRecord (exported)
@@ -45,6 +46,7 @@ the proxy generated itself, plus the model name. Null means "not known", never z
 | `id` | string | — | Proxy-generated, random; not the upstream ID |
 | `instance` | string | — | `instance.name` from config, default hostname |
 | `route` | string | — | Route name |
+| `client` | string\|null | — | Name from the tokens file or the client certificate; null if authentication is off. Same sanitization as `model` |
 | `dialect` | enum | — | `openai`, `anthropic`, `generic` |
 | `precision` | string\|null | — | Route config, operator-declared; null if empty |
 | `engine` | string\|null | — | Route config, operator-declared; null if empty |

@@ -84,6 +84,7 @@ downward only: `proxy` → `capture`, `pipeline`; `pipeline` → `shape`,
 | Unit | Token estimation error against fixtures with real usage, per dialect; result recorded in `doc/benchmarks.md` |
 | Unit | Sanitization: invalid model names, unknown error types, unknown finish reasons |
 | Integration | `stream_usage: inject` adds the option only when absent, leaves bodies above the cap unmodified |
+| Integration | Client auth: `header` accepts valid, rejects missing/invalid with 401 and never forwards; the token header never reaches the upstream; the upstream key does; `mtls` rejects unknown CA and names outside the allowlist |
 | Unit | Capture: caps, head/tail ring correctness, budget acquire/release, released buffers are zeroed |
 | Integration | Proxy + `fakeupstream` via `httptest`: bytes forwarded identically (hash compare), headers preserved, streaming flush timing, client cancel, upstream error, records match expectations |
 | Property | Forwarded body equals upstream body for random sizes and chunkings, capture on and off |
