@@ -346,3 +346,25 @@ No behaviour change beyond item 10; all tests unchanged and passing.
 - `testpki`: throwaway CA and certificates shared by tests.
 - Not covered by tests: PromQL syntax of the dashboard (needs a live
   Prometheus: the compose run), `native_histograms`.
+
+### 2026-10-02 — M3 review pass (A–E)
+
+- A. Metrics listener with client certificates: verification moved from
+  "required at handshake" to "verified if presented, required per endpoint",
+  so `/healthz` and `/readyz` stay reachable for probes; `/metrics` and pprof
+  answer 401 without a verified certificate. Tests: probes without a
+  certificate, scrape without one, certificate from a foreign CA.
+- B. `client_auth.header` may not be an upstream key header (`Authorization`,
+  `X-Api-Key`, `Api-Key`, `X-Goog-Api-Key`); the proxy would strip the
+  client's upstream key.
+- C. Shutdown order: the metrics listener now closes after the event queue is
+  drained and the sink flushed, as documented; test: during drain `/readyz` is
+  503 and `/metrics` still answers.
+- D. Empty `precision` / `engine` labels are exported as `unknown`, as
+  `outputs.md` says.
+- E. Refused requests (401) are counted in metrics only; no JSONL record, so
+  unauthenticated traffic cannot drive disk writes. Test: one record for three
+  requests of which two were refused.
+- Open: pin the Prometheus and Grafana image versions at the first compose
+  run; tokens-file permission warning; loadgen pacing goroutine after cancel;
+  document that token files are read at startup only.

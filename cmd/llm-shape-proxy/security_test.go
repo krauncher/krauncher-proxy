@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -64,7 +65,9 @@ func TestServeTLSWithHeaderAuthAndMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	cancel, done := startServe(t, cfg)
-	defer func() { cancel(); <-done }()
+	var stopOnce sync.Once
+	stop := func() { stopOnce.Do(func() { cancel(); <-done }) }
+	defer stop()
 	c := pki.Client()
 	url := "https://" + cfg.Listen.Addr + "/v1/models"
 
@@ -104,6 +107,11 @@ func TestServeTLSWithHeaderAuthAndMetrics(t *testing.T) {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+	stop()
+	// Refused requests are in the metrics, not in the records.
+	if lines := jsonlLines(t, cfg); len(lines) != 1 || !strings.Contains(lines[0], `"client":"app-a"`) {
+		t.Errorf("records %v", lines)
 	}
 	for _, want := range []string{
 		`llm_shape_auth_failures_total{reason="missing"} 1`,

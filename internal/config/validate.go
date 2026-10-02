@@ -13,6 +13,10 @@ import (
 	"strings"
 )
 
+// upstreamKeyHeaders carry clients' upstream API keys (OpenAI, Anthropic,
+// Azure, Google styles).
+var upstreamKeyHeaders = []string{"Authorization", "X-Api-Key", "Api-Key", "X-Goog-Api-Key"}
+
 // labelRe limits operator-declared route labels (precision, engine).
 var labelRe = regexp.MustCompile(`^[a-z0-9._-]{0,32}$`)
 
@@ -189,6 +193,13 @@ func (c *Config) validateClientAuth(p *problems) {
 	case AuthHeader:
 		if a.Header == "" {
 			p.addf("client_auth.header", "required for mode header")
+		}
+		// The proxy removes its token header before forwarding; using a header
+		// that carries the client's upstream key would strip that key.
+		for _, h := range upstreamKeyHeaders {
+			if strings.EqualFold(a.Header, h) {
+				p.addf("client_auth.header", "%q carries the upstream key; use a separate header such as X-Proxy-Key", a.Header)
+			}
 		}
 		if a.TokensFile == "" {
 			p.addf("client_auth.tokens_file", "required for mode header")

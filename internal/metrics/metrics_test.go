@@ -51,10 +51,10 @@ func TestObserve(t *testing.T) {
 	if reported != 100 || estimated != 40 {
 		t.Errorf("completion totals reported %v estimated %v", reported, estimated)
 	}
-	if got := testutil.ToFloat64(m.cells.WithLabelValues("main", "", "", "m1", "chat", "reported", "2048", "128")); got != 1 {
+	if got := testutil.ToFloat64(m.cells.WithLabelValues("main", "unknown", "unknown", "m1", "chat", "reported", "2048", "128")); got != 1 {
 		t.Errorf("cell 2048×128 = %v", got)
 	}
-	if got := testutil.ToFloat64(m.cells.WithLabelValues("main", "", "", "m1", "chat", "estimated", "1024", "64")); got != 1 {
+	if got := testutil.ToFloat64(m.cells.WithLabelValues("main", "unknown", "unknown", "m1", "chat", "estimated", "1024", "64")); got != 1 {
 		t.Errorf("cell 1024×64 = %v", got)
 	}
 	if got := testutil.ToFloat64(m.usageMissing.WithLabelValues("main", "m1", "chat")); got != 1 {
@@ -91,7 +91,7 @@ func TestClientLabelAndEmbeddings(t *testing.T) {
 	m.Observe(r)
 	r.Client = ptr("intruder")
 	m.Observe(r)
-	if got := testutil.ToFloat64(m.cells.WithLabelValues("main", "", "", "e", "embeddings", "reported", "512", "0", "app-a")); got != 1 {
+	if got := testutil.ToFloat64(m.cells.WithLabelValues("main", "unknown", "unknown", "e", "embeddings", "reported", "512", "0", "app-a")); got != 1 {
 		t.Errorf("embeddings cell for app-a %v", got)
 	}
 	if got := testutil.ToFloat64(m.requests.WithLabelValues("main", "e", "embeddings", "true", "2xx", "ok", "other")); got != 1 {
@@ -186,8 +186,19 @@ func TestServerTLSAndClientCertificates(t *testing.T) {
 	if code, body := fetch(t, pki.Client(scraper), url, ""); code != 200 || !strings.Contains(body, "llm_shape_test_gauge") {
 		t.Errorf("scrape with a client certificate: %d", code)
 	}
-	if code, _ := fetch(t, pki.Client(), url, ""); code != 0 {
+	if code, _ := fetch(t, pki.Client(), url, ""); code != 401 {
 		t.Errorf("scrape without a client certificate got %d", code)
+	}
+	// Probes present no certificate and must still get through.
+	for _, p := range []string{"/healthz", "/readyz"} {
+		if code, _ := fetch(t, pki.Client(), "https://"+s.Addr()+p, ""); code != 200 {
+			t.Errorf("%s without a client certificate: %d", p, code)
+		}
+	}
+	// A certificate from another CA is refused at the TLS layer.
+	_, _, foreign := testpki.New(t).Issue(t, "intruder", false)
+	if code, _ := fetch(t, pki.Client(foreign), url, ""); code != 0 {
+		t.Errorf("certificate from a foreign CA got %d", code)
 	}
 	if code, _ := fetch(t, http.DefaultClient, "http://"+s.Addr()+"/metrics", ""); code == 200 {
 		t.Error("plain HTTP served metrics on a TLS listener")

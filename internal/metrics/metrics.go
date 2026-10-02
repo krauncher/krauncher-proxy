@@ -170,6 +170,14 @@ func deref(s *string) string {
 	return *s
 }
 
+// orUnknown is the label value for an optional operator-declared field.
+func orUnknown(s *string) string {
+	if s == nil || *s == "" {
+		return "unknown"
+	}
+	return *s
+}
+
 // bucket returns the label of the smallest bound ≥ v, or "inf".
 func bucket(v int, bounds []int) string {
 	for _, b := range bounds {
@@ -237,7 +245,7 @@ func (m *Metrics) Observe(r shape.Record) {
 		if r.CompletionTokens != nil && r.Endpoint != "embeddings" {
 			out = bucket(*r.CompletionTokens, m.cell.OutputBounds)
 		}
-		cell := []string{r.Route, deref(r.Precision), deref(r.Engine), model, r.Endpoint, usage,
+		cell := []string{r.Route, orUnknown(r.Precision), orUnknown(r.Engine), model, r.Endpoint, usage,
 			bucket(*r.PromptTokens, m.cell.PromptBounds), out}
 		if m.clientLabel {
 			cell = append(cell, m.clients.value(deref(r.Client)))

@@ -53,7 +53,9 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Log:         log,
 		Out: func(r shape.Record) {
 			met.Observe(r)
-			if sink != nil {
+			// Refused requests are counted in metrics only: writing a record
+			// for each would let unauthenticated traffic drive disk writes.
+			if sink != nil && r.Outcome != shape.OutcomeUnauthorized {
 				sink.Submit(r)
 			}
 		},
@@ -69,13 +71,18 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		busy.Add(int64(time.Since(start)))
 	})
 	// Runs on every exit path, after the proxy server has stopped: drain the
-	// events, then flush the sink.
+	// events, flush the sink, and only then close the metrics listener, so the
+	// last records can still be scraped while draining.
+	var msrv *metrics.Server
 	defer func() {
 		events.Close()
 		if sink != nil {
 			if err := sink.Close(); err != nil {
 				log.Error("jsonl sink close", "err", err)
 			}
+		}
+		if msrv != nil {
+			msrv.Close()
 		}
 		log.Info("stopped", "events_dropped", events.Dropped())
 	}()
@@ -96,11 +103,9 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	}
 	selfMetrics(met, h, events, asm, sink, authn, &busy)
 
-	msrv, err := metrics.NewServer(cfg.Metrics, met)
-	if err != nil {
+	if msrv, err = metrics.NewServer(cfg.Metrics, met); err != nil {
 		return err
 	}
-	defer msrv.Close()
 	go func() {
 		if err := msrv.Serve(); err != nil {
 			log.Error("metrics listener", "err", err)

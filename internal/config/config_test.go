@@ -120,6 +120,8 @@ func TestValidationErrorsNameTheKey(t *testing.T) {
 		{"header without tokens", minimal + "client_auth:\n  mode: header\n", "client_auth.tokens_file"},
 		{"mtls without ca", minimal + "client_auth:\n  mode: mtls\n", "listen.tls.client_ca_file"},
 		{"bad auth mode", minimal + "client_auth:\n  mode: basic\n", "client_auth.mode"},
+		{"token in upstream key header", minimal + "client_auth:\n  mode: header\n  header: authorization\n  tokens_file: t\n", "carries the upstream key"},
+		{"token in x-api-key", minimal + "client_auth:\n  mode: header\n  header: X-API-KEY\n  tokens_file: t\n", "carries the upstream key"},
 		{"bounds not increasing", minimal + "metrics:\n  shape_cell:\n    prompt_bounds: [10, 5]\n", "metrics.shape_cell.prompt_bounds"},
 		{"budget below cap", minimal + "capture:\n  budget_bytes: 1KiB\n", "capture.budget_bytes"},
 		{"bad log level", minimal + "log:\n  level: loud\n", "log.level"},

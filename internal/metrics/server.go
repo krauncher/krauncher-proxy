@@ -48,11 +48,16 @@ func NewServer(c config.Metrics, m *Metrics) (*Server, error) {
 		token = sum[:]
 	}
 	s := &Server{}
+	// Health endpoints stay open for probes, which present neither a token
+	// nor a client certificate; everything else needs whatever is configured.
 	protect := func(h http.Handler) http.Handler {
-		if token == nil {
-			return h
+		if token != nil {
+			h = bearer(token, h)
 		}
-		return bearer(token, h)
+		if c.TLS.ClientCAFile != "" {
+			h = requireClientCert(h)
+		}
+		return h
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", protect(promhttp.HandlerFor(m.Registry(), promhttp.HandlerOpts{})))
@@ -82,7 +87,9 @@ func NewServer(c config.Metrics, m *Metrics) (*Server, error) {
 			if err != nil {
 				return nil, fmt.Errorf("metrics.tls.client_ca_file: %w", err)
 			}
-			cfg.ClientCAs, cfg.ClientAuth = pool, tls.RequireAndVerifyClientCert
+			// Verified at the TLS layer when presented; required per handler,
+			// so probes can reach /healthz and /readyz without one.
+			cfg.ClientCAs, cfg.ClientAuth = pool, tls.VerifyClientCertIfGiven
 		}
 		s.srv.TLSConfig, s.tls = cfg, true
 	}
@@ -126,6 +133,18 @@ func bearer(tokenHash []byte, next http.Handler) http.Handler {
 		if !ok || subtle.ConstantTimeCompare(sum[:], tokenHash) != 1 {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requireClientCert lets through only connections whose client certificate
+// was verified against the CA.
+func requireClientCert(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 {
+			http.Error(w, "client certificate required", http.StatusUnauthorized)
 			return
 		}
 		next.ServeHTTP(w, r)

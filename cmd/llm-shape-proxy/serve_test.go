@@ -83,6 +83,19 @@ func TestServeShutdownLetsStreamsFinish(t *testing.T) {
 
 	resp := streamRequest(t, cfg.Listen.Addr)
 	cancel() // shutdown while the stream runs
+	// While draining: not ready for new traffic, metrics still served.
+	var ready, scrape int
+	for range 50 {
+		ready, _, _ = get(&http.Client{}, "http://"+cfg.Metrics.Listen+"/readyz", nil)
+		if ready == 503 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	scrape, _, _ = get(&http.Client{}, "http://"+cfg.Metrics.Listen+"/metrics", nil)
+	if ready != 503 || scrape != 200 {
+		t.Errorf("during drain: readyz %d, metrics %d", ready, scrape)
+	}
 	rest, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if !strings.HasSuffix(string(rest), "data: [DONE]\n\n") {
