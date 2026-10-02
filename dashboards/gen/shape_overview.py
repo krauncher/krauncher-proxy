@@ -63,10 +63,13 @@ panel("Completion tokens", "heatmap", heat("llm_shape_completion_tokens"), 8, 8,
 panel("Input / output token ratio", "timeseries",
       [q(f'sum(rate(llm_shape_prompt_tokens_total{{{SEL}}}[{R}])) / sum(rate(llm_shape_completion_tokens_total{{{SEL}}}[{R}]))', "input/output")], 16, 8)
 y += 8
-panel("Shape cells: share of requests by prompt × output tokens (bucket upper bounds)", "table",
-      [q(f'sum by (prompt_bucket, output_bucket) (increase(llm_shape_cell_total{{{SEL}}}[$__range])) / scalar(sum(increase(llm_shape_cell_total{{{SEL}}}[$__range])))',
+# Cumulative counts, not increase() over the range: Prometheus cannot see the
+# first increment of a new series, and shape cells are sparse, so increase()
+# would undercount exactly the rare cells.
+panel("Shape cells since proxy start: share of requests by prompt × output tokens (bucket upper bounds)", "table",
+      [q(f'sum by (prompt_bucket, output_bucket) (llm_shape_cell_total{{{SEL}}}) / scalar(sum(llm_shape_cell_total{{{SEL}}}))',
          format="table", instant=True)], 0, 24, h=9, unit="percentunit",
-      desc="Rows: prompt token bucket. Columns: output token bucket. Reported and estimated usage together.",
+      desc="Rows: prompt token bucket. Columns: output token bucket. Reported and estimated usage together. Counted since each proxy instance started; increase() over a time range would miss the first request of every new cell.",
       extra={"transformations": [{"id": "groupingToMatrix", "options": {"rowField": "prompt_bucket", "columnField": "output_bucket", "valueField": "Value"}}]})
 y += 9
 

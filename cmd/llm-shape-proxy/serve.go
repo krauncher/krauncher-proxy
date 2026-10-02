@@ -154,6 +154,12 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	if err := srv.Shutdown(sctx); err != nil {
 		log.Warn("in-flight requests cut at grace period", "err", err)
 		srv.Close()
+		// Close does not wait for handlers. Give the cut requests a moment to
+		// emit their records before the event queue closes; otherwise exactly
+		// the requests that ran longest would be missing from the data.
+		for deadline := time.Now().Add(5 * time.Second); h.InflightTotal() > 0 && time.Now().Before(deadline); {
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 	log.Info("server stopped", "not_found", h.NotFound())
 	return nil

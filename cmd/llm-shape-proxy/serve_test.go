@@ -137,6 +137,10 @@ func TestServeGraceExpiry(t *testing.T) {
 	if el := time.Since(start); el < 200*time.Millisecond {
 		t.Errorf("returned after %v, before the grace period", el)
 	}
+	// The stream cut at the grace period still has its record.
+	if lines := jsonlLines(t, cfg); len(lines) != 1 {
+		t.Errorf("records of the cut stream: %v", lines)
+	}
 }
 
 func TestServeListenFailureCleansUp(t *testing.T) {

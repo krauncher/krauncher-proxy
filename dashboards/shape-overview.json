@@ -304,7 +304,7 @@
     },
     {
       "type": "table",
-      "title": "Shape cells: share of requests by prompt \u00d7 output tokens (bucket upper bounds)",
+      "title": "Shape cells since proxy start: share of requests by prompt \u00d7 output tokens (bucket upper bounds)",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -318,7 +318,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (prompt_bucket, output_bucket) (increase(llm_shape_cell_total{route=~\"$route\",model=~\"$model\"}[$__range])) / scalar(sum(increase(llm_shape_cell_total{route=~\"$route\",model=~\"$model\"}[$__range])))",
+          "expr": "sum by (prompt_bucket, output_bucket) (llm_shape_cell_total{route=~\"$route\",model=~\"$model\"}) / scalar(sum(llm_shape_cell_total{route=~\"$route\",model=~\"$model\"}))",
           "legendFormat": "__auto",
           "format": "table",
           "instant": true,
@@ -336,7 +336,7 @@
         "overrides": []
       },
       "options": {},
-      "description": "Rows: prompt token bucket. Columns: output token bucket. Reported and estimated usage together.",
+      "description": "Rows: prompt token bucket. Columns: output token bucket. Reported and estimated usage together. Counted since each proxy instance started; increase() over a time range would miss the first request of every new cell.",
       "transformations": [
         {
           "id": "groupingToMatrix",

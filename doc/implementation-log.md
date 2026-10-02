@@ -11,7 +11,7 @@ Milestone definitions are in [development.md](development.md).
 | 0 | Skeleton: module, CI, config, `cmd/llm-shape-proxy` | done |
 | M1 | Pass-through proxy, timings, generic records, JSONL sink, fakeupstream | done |
 | M2 | Capture, pipeline events, jsonscan, SSE, `openai` dialect, estimation, `stream_usage` | done |
-| M3 | Prometheus metrics, shape cell, dashboard, compose, cheap security measures | done (compose run pending) |
+| M3 | Prometheus metrics, shape cell, dashboard, compose, cheap security measures | done |
 | M2b | `anthropic` dialect | not started |
 | M4 | Prefix repetition estimator | not started |
 | M5 | Measured performance work | not started |
@@ -378,3 +378,28 @@ No behaviour change beyond item 10; all tests unchanged and passing.
   restart.
 - Still open: pin the Prometheus and Grafana image versions at the first
   compose run (needs the images pulled).
+
+### 2026-10-02 — demo stack verified
+
+- Built and ran `deploy/compose.yaml`: image 43.5 MB, distroless, user
+  `nonroot`; process hardening applied in the container (no warning).
+- Every dashboard query (26 expressions) run against the live Prometheus via
+  its HTTP API: all parse; data present wherever the demo produces it (no
+  cached tokens, usage-missing or auth failures by design of the demo).
+  Grafana 13.2.3: datasource healthy, dashboard provisioned (22 panels).
+  Visual check in a browser not done by me.
+- Found and fixed: the shape-cell table used `increase()`, which cannot see the
+  first increment of a new series; sparse cells read 0 and the share was NaN.
+  The table now shows cumulative shares since proxy start (explained in the
+  panel description).
+- Found and fixed: Docker's default 10 s stop timeout would SIGKILL the proxy
+  before `shutdown.grace`; `stop_grace_period: 70s`. Verified: stop with four
+  streams in flight took 60 s, the longest stream (137 s recording) was cut at
+  the grace period, clean exit.
+- Found and fixed: records of requests cut at the grace period were dropped
+  (`Server.Close` does not wait for handlers, the queue closed first). serve
+  now waits up to 5 s for in-flight handlers before closing the queue; the
+  grace-expiry test checks the record (failed 2 of 5 runs without the fix).
+- Compose builds one image (`llm-shape-proxy:dev`) for the three services
+  instead of three copies; Prometheus `v3.15.0` and Grafana `13.2.3` pinned by
+  tag and digest.

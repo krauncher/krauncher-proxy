@@ -119,6 +119,9 @@ func (h *Handler) NotFound() uint64 { return h.notFound.Load() }
 // BudgetUsed returns the capture memory currently reserved.
 func (h *Handler) BudgetUsed() int64 { return h.budget.Used() }
 
+// InflightTotal returns the requests currently in flight on all routes.
+func (h *Handler) InflightTotal() int64 { return h.inflight.Load() }
+
 // Routes returns the route names.
 func (h *Handler) Routes() []string {
 	out := make([]string, len(h.routes))
