@@ -368,3 +368,13 @@ No behaviour change beyond item 10; all tests unchanged and passing.
 - Open: pin the Prometheus and Grafana image versions at the first compose
   run; tokens-file permission warning; loadgen pacing goroutine after cancel;
   document that token files are read at startup only.
+
+### 2026-10-02 — open items closed
+
+- Startup warning when a secret file (tokens file, metrics bearer token, TLS
+  keys) is readable by group or others (`harden.LooseSecretFile`).
+- `loadgen`: the pacing goroutine exits on cancel instead of blocking.
+- `configuration.md`: secret files are read at startup only; rotation takes a
+  restart.
+- Still open: pin the Prometheus and Grafana image versions at the first
+  compose run (needs the images pulled).

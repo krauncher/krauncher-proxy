@@ -133,6 +133,9 @@ shutdown:
 - The configuration file contains no secrets. TLS keys, the client tokens
   file and the metrics bearer token are referenced by file path. The tokens
   file holds only hashes.
+- These files are read once at startup: rotating a token, a key or a
+  certificate takes a restart. A file readable by group or others is reported
+  with a warning at startup (`0600` expected).
 - There is no option to store upstream keys in the proxy. They come from the
   client with each request.
 - `security.strict: true` refuses to start unless: `listen.tls` is set,

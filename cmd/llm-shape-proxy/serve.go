@@ -33,6 +33,19 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	if err := harden.Apply(); err != nil {
 		log.Warn("process hardening not applied", "err", err)
 	}
+	for key, path := range map[string]string{
+		"client_auth.tokens_file":   cfg.ClientAuth.TokensFile,
+		"metrics.bearer_token_file": cfg.Metrics.BearerTokenFile,
+		"listen.tls.key_file":       cfg.Listen.TLS.KeyFile,
+		"metrics.tls.key_file":      cfg.Metrics.TLS.KeyFile,
+	} {
+		if path == "" {
+			continue
+		}
+		if why := harden.LooseSecretFile(path); why != "" {
+			log.Warn("secret file readable by others", "key", key, "detail", why)
+		}
+	}
 	authn, err := auth.New(cfg.ClientAuth)
 	if err != nil {
 		return err

@@ -56,10 +56,13 @@ func main() {
 	tokens := make(chan struct{}, *conc)
 	go func() { // pacing
 		if *rate <= 0 {
-			for ctx.Err() == nil {
-				tokens <- struct{}{}
+			for {
+				select {
+				case tokens <- struct{}{}:
+				case <-ctx.Done():
+					return
+				}
 			}
-			return
 		}
 		t := time.NewTicker(time.Duration(float64(time.Second) / *rate))
 		defer t.Stop()
