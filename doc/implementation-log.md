@@ -14,7 +14,7 @@ Milestone definitions are in [development.md](development.md).
 | M3 | Prometheus metrics, shape cell, dashboard, compose, cheap security measures | done |
 | M2b | `anthropic` dialect | not started |
 | M4 | Prefix repetition estimator | not started |
-| M5 | Measured performance work | not started |
+| M5 | Measured performance work | done |
 | M6 | Release hardening, `CONTRIBUTING.md`, `SECURITY.md` | not started |
 | M7 | Gateway log importer | not started |
 
@@ -403,3 +403,25 @@ No behaviour change beyond item 10; all tests unchanged and passing.
 - Compose builds one image (`llm-shape-proxy:dev`) for the three services
   instead of three copies; Prometheus `v3.15.0` and Grafana `13.2.3` pinned by
   tag and digest.
+
+### 2026-10-02 — M5: measured performance
+
+- `tools/loadtest`: closed-loop throughput, open-loop fixed-rate latency (a
+  fixed schedule; a ticker-based first version dropped ticks and under-offered
+  load, caught by comparing offered and achieved rates), long-lived streams,
+  chunked request bodies. Micro-benchmarks for the writer, the capturing
+  reader, stage 2 and JSONL encoding.
+- Measured shortfall: at 10,000 req/s the proxy added 4.9 ms p99; the profile
+  showed GC at ~40% of CPU, 74% of allocations from capture buffers growing to
+  a full 64 KiB step per request and 18% from ReverseProxy's per-response copy
+  buffer. Fixed both (buffers grow with the data, pooled copy buffers):
+  allocations ÷11, throughput 13,500 → 27,600 req/s, p99 added latency at
+  10,000 req/s 4.9 → 1.9 ms.
+- Streams: 20,000 concurrent streams held with 0 errors and 0 event drops;
+  capacity ~45,000 chunks/s per vCPU, bound by one read + one write/flush
+  syscall per chunk, which streaming requires; proxy code is ~3% of that.
+- Chunked request bodies under load: no cut responses (closes the open item
+  from the EOF-race fix).
+- Targets in `performance.md` now show the measured values next to them; two
+  are not met as written (p99 ≤ 1 ms at 10,000 req/s; 200,000 chunks/s on
+  4 vCPU) and are explained there and in `benchmarks.md`.

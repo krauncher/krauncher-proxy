@@ -64,7 +64,8 @@ Dockerfile                proxy + demo tools on distroless, non-root
 internal/fakeupstream/    simulated OpenAI-compatible API (handler, used by tests)
 tools/fakeupstream/       the same as a standalone binary for demos and load;
                           -replay <dir> -speed <x> replays recordings with their timing
-tools/loadgen/            load generator
+tools/loadgen/            demo traffic from replay sets
+tools/loadtest/           performance measurements (throughput, fixed-rate latency, streams)
 tools/capture/            records fixtures from a real API (key from the environment)
 testdata/                 dialect fixtures (content replaced by placeholders)
 doc/                      this documentation

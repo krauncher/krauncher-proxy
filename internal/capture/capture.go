@@ -41,7 +41,10 @@ func (b *Budget) Release(n int64) { b.used.Add(-n) }
 func (b *Budget) Used() int64 { return b.used.Load() }
 
 // Buffer keeps the first limit bytes written to it, reserving budget in steps
-// as bytes arrive, so memory follows the actual size, not the cap.
+// as bytes arrive, so memory follows the actual size, not the cap. The budget
+// is reserved in steps, but the slice itself grows only as bytes arrive (a
+// 2 KiB body allocates about 2 KiB, not a whole step): allocation volume, not
+// the reservation, is what drives GC cost under load (doc/benchmarks.md, M5).
 type Buffer struct {
 	buf       []byte
 	limit     int
@@ -70,7 +73,6 @@ func (b *Buffer) Write(p []byte) int {
 			break
 		}
 		b.reserved += grow
-		b.buf = slices.Grow(b.buf, b.reserved-len(b.buf))
 	}
 	b.buf = append(b.buf, p[:need]...)
 	if need < len(p) {

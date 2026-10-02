@@ -64,6 +64,15 @@ type route struct {
 	proxy    *httputil.ReverseProxy
 }
 
+// copyBuffers recycles the 32 KiB buffers ReverseProxy copies responses
+// through; without it every response allocates one (doc/benchmarks.md, M5).
+var copyBuffers = &bufferPool{p: sync.Pool{New: func() any { b := make([]byte, 32<<10); return &b }}}
+
+type bufferPool struct{ p sync.Pool }
+
+func (b *bufferPool) Get() []byte  { return *b.p.Get().(*[]byte) }
+func (b *bufferPool) Put(v []byte) { b.p.Put(&v) }
+
 // forwardingHeaders are restored after ReverseProxy strips them, so the
 // upstream sees the client's request as sent.
 var forwardingHeaders = []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto"}
@@ -85,6 +94,7 @@ func New(o Options) (*Handler, error) {
 			Transport:      o.Transport,
 			FlushInterval:  -1, // never buffer: LLM responses are streams
 			ModifyResponse: onHeaders,
+			BufferPool:     copyBuffers,
 			ErrorHandler:   h.onError,
 			ErrorLog:       slog.NewLogLogger(o.Log.Handler(), slog.LevelDebug),
 		}

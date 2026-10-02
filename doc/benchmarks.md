@@ -116,3 +116,56 @@ mixing text and tool-call events.
 Proxy → `api.deepseek.com`, one streaming and one plain request: both records
 complete (`capture: full`, no parse errors); stream with 55 events, 52
 completion tokens reported, output bytes exact, TTFT and decode rate present.
+
+## M5: proxy performance (2026-10-02)
+
+Machine: Intel Xeon E-2146G (6 cores, 12 threads), 31 GB, Linux 6.12, Go
+1.26.8, loopback. Proxy pinned to 4 vCPU (2 cores with their hyperthreads,
+`GOMAXPROCS=4`); test upstream (`fakeupstream`) and load (`tools/loadtest`)
+on the other cores. Capture on (`openai` route), JSONL off.
+
+Micro-benchmarks (`go test -bench`, 4 vCPU):
+
+| Path | Time | Allocations |
+|---|---|---|
+| Streamed chunk through the writer, capture off / on | 139 / 161 ns | 0 |
+| 2 KiB request body through the capturing reader | 0.7 µs (was 7.3 µs) | 3 KiB (was 66 KiB) |
+| Stage 2, short stream (request + response job) | 33 µs | 89 KB |
+| Stage 2, 11 KiB reasoning stream | 84 µs | 106 KB |
+| JSONL encode, one record | 1.7 µs | 480 B |
+
+Non-streaming requests (2 KB prompt, 16-token answer), upstream alone serves
+51,000 req/s:
+
+| | Before fixes | After fixes |
+|---|---|---|
+| Throughput, saturated | 13,000–13,700 req/s | 27,600 req/s |
+| Added latency at 1,000 req/s (p50 / p99) | +0.16 / +0.33 ms | +0.13 / +0.17 ms |
+| Added latency at 5,000 req/s | p99 +1.4 ms | within measurement noise |
+| Added latency at 10,000 req/s | p99 +4.9 ms | p50 +0.13, p99 +1.9 ms |
+| GC share of CPU at 10,000 req/s | ~40% | ~6% |
+
+Fixed rates are offered open-loop (a fixed schedule; latency counts from the
+scheduled time), so slow responses do not hide queueing. The direct path's own
+p99 is about 1.25 ms, which bounds the precision of the "added" numbers.
+
+Streams (answer pace 10 chunks/s per stream, ~250-byte events):
+
+| Streams | Chunks/s direct / proxy | Time to headers p50 / p99, direct → proxy | Proxy CPU | Proxy RSS |
+|---|---|---|---|---|
+| 5,000 | 49,531 / 49,476 | 50.7 → 51.0 / 70 → 82 ms | 1.2 vCPU | 642 MB (410 MB capture) |
+| 20,000 | 168,664 / 167,079 | 54.7 → 108 / 689 → 5,827 ms | 3.8 vCPU | 2.36 GB (1.38 GB capture) |
+
+At 20,000 streams both the test upstream (4 vCPU) and the proxy were
+saturated; the time-to-headers tail is the ramp (2,000 new streams/s) queueing
+on a full CPU. Profile at 12,000 streams: 73% of proxy CPU in syscalls (read
+from upstream, write and flush to the client for every chunk; the flush alone
+40%), about 3% in proxy code (SSE counter, tail ring, timeline), GC 1.5%.
+Per-chunk flushing is required for streaming latency, so the capacity is
+about 45,000 chunks/s per vCPU on this CPU; a deployment above that scales
+horizontally.
+
+Request bodies without Content-Length (chunked), under load: 100,000 plain
+requests at 5,000 req/s and 3,000 streams, 0 errors, no `upstream_error` or
+`client_cancelled` outcomes; the EOF race fixed earlier for bodies with a
+length does not appear for chunked ones.
